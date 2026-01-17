@@ -7,6 +7,7 @@ package rpc
 
 import (
 	context "context"
+	iter "iter"
 )
 
 // AdminCaller implements Admin via a Caller.
@@ -19,9 +20,9 @@ type GetpidRes struct {
 }
 
 func (s *AdminCaller) Getpid() (res0 int, err error) {
-	var res GetpidRes
-	err = s.Caller.Call(context.Background(), "Getpid", nil, &res)
-	return res.Res0, err
+	var res_ GetpidRes
+	err = s.Caller.Call(context.Background(), "Getpid", nil, &res_)
+	return res_.Res0, err
 }
 
 type HostnameRes struct {
@@ -29,9 +30,9 @@ type HostnameRes struct {
 }
 
 func (s *AdminCaller) Hostname() (res0 string, err error) {
-	var res HostnameRes
-	err = s.Caller.Call(context.Background(), "Hostname", nil, &res)
-	return res.Res0, err
+	var res_ HostnameRes
+	err = s.Caller.Call(context.Background(), "Hostname", nil, &res_)
+	return res_.Res0, err
 }
 
 // AdminHandler implements Handler via a Admin.
@@ -39,32 +40,52 @@ type AdminHandler struct {
 	Admin
 }
 
+func (h *AdminHandler) Getpid(ctx context.Context, stream Stream) error {
+	var res GetpidRes
+	var err_ error
+	res.Res0, err_ = h.Admin.Getpid()
+	if err_ != nil {
+		return err_
+	}
+	if err := stream.Send(ctx, &res); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *AdminHandler) Hostname(ctx context.Context, stream Stream) error {
+	var res HostnameRes
+	var err_ error
+	res.Res0, err_ = h.Admin.Hostname()
+	if err_ != nil {
+		return err_
+	}
+	if err := stream.Send(ctx, &res); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *AdminHandler) Methods() iter.Seq2[string, MethodFunc] {
+	return func(yield func(string, MethodFunc) bool) {
+		if !yield("Getpid", h.Getpid) {
+			return
+		}
+		if !yield("Hostname", h.Hostname) {
+			return
+		}
+	}
+}
+
 func (h *AdminHandler) Serve(ctx context.Context, method string, stream Stream) error {
 	switch method {
 	case "Getpid":
-		var res GetpidRes
-		var err error
-		res.Res0, err = h.Getpid()
-		if err != nil {
-			return err
-		}
-		if err := stream.Send(ctx, &res); err != nil {
-			return err
-		}
+		return h.Getpid(ctx, stream)
 	case "Hostname":
-		var res HostnameRes
-		var err error
-		res.Res0, err = h.Hostname()
-		if err != nil {
-			return err
-		}
-		if err := stream.Send(ctx, &res); err != nil {
-			return err
-		}
+		return h.Hostname(ctx, stream)
 	default:
 		return UnknownMethod(method)
 	}
-	return nil
 }
 
 // DiscoveryCaller implements Discovery via a Caller.
@@ -82,16 +103,16 @@ type ListRes struct {
 }
 
 func (s *DiscoveryCaller) List(node string, target string) (res0 []string) {
-	arg := &ListArg{
+	arg_ := &ListArg{
 		Node:   node,
 		Target: target,
 	}
-	var res ListRes
-	err := s.Caller.Call(context.Background(), "List", arg, &res)
+	var res_ ListRes
+	err := s.Caller.Call(context.Background(), "List", arg_, &res_)
 	if err != nil {
 		panic(err)
 	}
-	return res.Res0
+	return res_.Res0
 }
 
 // DiscoveryHandler implements Handler via a Discovery.
@@ -99,20 +120,32 @@ type DiscoveryHandler struct {
 	Discovery
 }
 
+func (h *DiscoveryHandler) List(ctx context.Context, stream Stream) error {
+	var arg ListArg
+	if err := stream.Recv(ctx, &arg); err != nil {
+		return err
+	}
+	var res ListRes
+	res.Res0 = h.Discovery.List(arg.Node, arg.Target)
+	if err := stream.Send(ctx, &res); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *DiscoveryHandler) Methods() iter.Seq2[string, MethodFunc] {
+	return func(yield func(string, MethodFunc) bool) {
+		if !yield("List", h.List) {
+			return
+		}
+	}
+}
+
 func (h *DiscoveryHandler) Serve(ctx context.Context, method string, stream Stream) error {
 	switch method {
 	case "List":
-		var arg ListArg
-		if err := stream.Recv(ctx, &arg); err != nil {
-			return err
-		}
-		var res ListRes
-		res.Res0 = h.List(arg.Node, arg.Target)
-		if err := stream.Send(ctx, &res); err != nil {
-			return err
-		}
+		return h.List(ctx, stream)
 	default:
 		return UnknownMethod(method)
 	}
-	return nil
 }

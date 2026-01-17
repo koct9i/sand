@@ -109,7 +109,7 @@ func (s *{{$.Name}}Caller) {{$method.Name}} (
 	{{- end -}}
 ) {
 	{{- if $method.WithArguments}}
-	arg := &{{$method.Name}}Arg{
+	arg_ := &{{$method.Name}}Arg{
 		{{- range $param := $method.Arguments}}
 		{{- if $param.IsContext}}{{continue}}{{end}}
 		{{$param.PublicName}}: {{$param.Name}},
@@ -117,15 +117,15 @@ func (s *{{$.Name}}Caller) {{$method.Name}} (
 	}
 	{{- end}}
 	{{- if $method.WithResults}}
-	var res {{$method.Name}}Res
+	var res_ {{$method.Name}}Res
 	{{$method.Error.Name}}
 	{{- if $method.WithError}} = {{else}} := {{end}}
 	{{- else}}
 	{{if $method.WithError}}return {{else}}{{$method.Error.Name}} := {{end}}
 	{{- end -}}
 	s.Caller.Call({{$method.Context.Name}}, "{{$method.Name}}",
-	{{- if $method.WithArguments}}arg{{else}}nil{{end}},
-	{{- if $method.WithResults}}&res{{else}}nil{{end}})
+	{{- if $method.WithArguments}}arg_{{else}}nil{{end}},
+	{{- if $method.WithResults}}&res_{{else}}nil{{end}})
 	{{- if not $method.WithError}}
 	if {{$method.Error.Name}} != nil {
 		panic({{$method.Error.Name}})
@@ -135,7 +135,7 @@ func (s *{{$.Name}}Caller) {{$method.Name}} (
 	{{"return "}}
 	{{- range $param := $method.Results}}
 	{{- if $param.IsError}}{{continue}}{{end}}
-	{{- $param.Comma}}res.{{$param.PublicName}}
+	{{- $param.Comma}}res_.{{$param.PublicName}}
 	{{- end}}
 	{{- if $method.WithError}}
 	{{- $method.Error.Comma}}{{$method.Error.Name}}
@@ -150,52 +150,69 @@ type {{.Name}}Handler struct {
 	{{.Name}}
 }
 
-func (h *{{$.Name}}Handler) Serve (ctx {{.Imports.Context|raw}}, method string, stream {{.Imports.Stream|raw}}) error {
-	switch method {
-	{{- range $method := .Methods}}
-	case "{{$method.Name}}":
-		{{- if $method.WithArguments}}
-		var arg {{$method.Name}}Arg
-		if err := stream.Recv(ctx, &arg); err != nil {
-			return err
-		}
-		{{- end}}
-		{{- if $method.WithResults}}
-		var res {{$method.Name}}Res
-		{{- end}}
-		{{- if $method.WithError}}
-		var err error
-		{{- end}}
-		{{range $param := $method.Results}}
-		{{- if $param.IsError}}{{continue}}{{end}}
-		{{- $param.Comma}}res.{{$param.PublicName}}
-		{{- end}}
-		{{- if $method.WithError}}
-		{{- $method.Error.Comma}}err
-		{{- end}}
-		{{- if or $method.WithResults $method.WithError}} = {{end -}}
-		h.{{$method.Name}}(
+{{- range $method := .Methods}}
+
+func (h *{{$.Name}}Handler) {{$method.Name}} (ctx {{$.Imports.Context|raw}}, stream {{$.Imports.Stream|raw}}) error {
+	{{- if $method.WithArguments}}
+	var arg {{$method.Name}}Arg
+	if err := stream.Recv(ctx, &arg); err != nil {
+		return err
+	}
+	{{- end}}
+	{{- if $method.WithResults}}
+	var res {{$method.Name}}Res
+	{{- end}}
+	{{- if $method.WithError}}
+	var err_ error
+	{{- end}}
+	{{range $param := $method.Results}}
+	{{- if $param.IsError}}{{continue}}{{end}}
+	{{- $param.Comma}}res.{{$param.PublicName}}
+	{{- end}}
+	{{- if $method.WithError}}
+	{{- $method.Error.Comma}}err_
+	{{- end}}
+	{{- if or $method.WithResults $method.WithError}} = {{end -}}
+	h.{{$.Name}}.{{$method.Name}}(
 		{{- if $method.WithContext}}ctx{{end}}
 		{{- range $param := $method.Arguments}}
 		{{- if $param.IsContext}}{{continue}}{{end}}
 		{{- $param.Comma}}arg.{{$param.PublicName}}
 		{{- if $param.IsVariadic}}...{{end}}
 		{{- end}})
-		{{- if $method.WithError}}
-		if err != nil {
-			return err
+	{{- if $method.WithError}}
+	if err_ != nil {
+		return err_
+	}
+	{{- end}}
+	{{- if $method.WithResults}}
+	if err := stream.Send(ctx, &res); err != nil {
+		return err
+	}
+	{{- end}}
+	return nil
+}
+{{- end}}
+
+func (h *{{$.Name}}Handler) Methods() {{.Imports.Seq2|raw}}[string, {{.Imports.MethodFunc|raw}}] {
+	return func(yield func(string, {{.Imports.MethodFunc|raw}}) bool) {
+		{{- range $method := .Methods}}
+		if !yield("{{$method.Name}}", h.{{$method.Name}}) {
+			return
 		}
 		{{- end}}
-		{{- if $method.WithResults}}
-		if err := stream.Send(ctx, &res); err != nil {
-			return err
-		}
-		{{- end}}
+	}
+}
+
+func (h *{{$.Name}}Handler) Serve(ctx {{.Imports.Context|raw}}, method string, stream {{.Imports.Stream|raw}}) error {
+	switch method {
+	{{- range $method := .Methods}}
+	case "{{$method.Name}}":
+		return h.{{$method.Name}}(ctx, stream)
 	{{- end}}
 	default:
 		return {{.Imports.UnknownMethod|raw}}(method)
 	}
-	return nil
 }
 
 `
@@ -280,8 +297,10 @@ func (g *rpcGenerator) GenerateType(c *generator.Context, t *types.Type, w io.Wr
 
 	importedTypes := []string{
 		"context.Context",
+		"iter.Seq2",
 		"github.com/koct9i/sand/rpc.Caller",
 		"github.com/koct9i/sand/rpc.Stream",
+		"github.com/koct9i/sand/rpc.MethodFunc",
 	}
 	imports := generator.Args{}
 	for _, t := range importedTypes {

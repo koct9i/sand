@@ -69,14 +69,10 @@ func (s *jsonStream) Close() error {
 	return s.rc.Close()
 }
 
-type httpHandler struct {
-	Handler rpc.Handler
-}
+type httpMethodFunc rpc.MethodFunc
 
-var _ http.Handler = (*httpHandler)(nil)
-
-func (h *httpHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	err := h.Handler.Serve(r.Context(), r.PathValue("method"), &jsonStream{
+func (f httpMethodFunc) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	err := f(r.Context(), &jsonStream{
 		rc: r.Body,
 		w:  rw,
 	})
@@ -89,7 +85,7 @@ func (h *httpHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 }
 
 func RegisterHandler(mux *http.ServeMux, path string, handler rpc.Handler) {
-	mux.Handle(path+"/{method}", &httpHandler{
-		Handler: handler,
-	})
+	for method, methodFunc := range handler.Methods() {
+		mux.Handle(path+method, httpMethodFunc(methodFunc))
+	}
 }

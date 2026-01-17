@@ -7,6 +7,7 @@ package test
 
 import (
 	context "context"
+	iter "iter"
 
 	rpc "github.com/koct9i/sand/rpc"
 )
@@ -36,12 +37,12 @@ type WithNamesRes struct {
 }
 
 func (s *TestCaller) WithNames(ctx_ context.Context, param_ int) (result_ int, err_ error) {
-	arg := &WithNamesArg{
+	arg_ := &WithNamesArg{
 		Param_: param_,
 	}
-	var res WithNamesRes
-	err_ = s.Caller.Call(ctx_, "WithNames", arg, &res)
-	return res.Result_, err_
+	var res_ WithNamesRes
+	err_ = s.Caller.Call(ctx_, "WithNames", arg_, &res_)
+	return res_.Result_, err_
 }
 
 func (s *TestCaller) WithNothing() {
@@ -56,10 +57,10 @@ type WithParamArg struct {
 }
 
 func (s *TestCaller) WithParam(arg int) {
-	arg := &WithParamArg{
+	arg_ := &WithParamArg{
 		Arg: arg,
 	}
-	err := s.Caller.Call(context.Background(), "WithParam", arg, nil)
+	err := s.Caller.Call(context.Background(), "WithParam", arg_, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -70,12 +71,12 @@ type WithResultRes struct {
 }
 
 func (s *TestCaller) WithResult() (res0 int) {
-	var res WithResultRes
-	err := s.Caller.Call(context.Background(), "WithResult", nil, &res)
+	var res_ WithResultRes
+	err := s.Caller.Call(context.Background(), "WithResult", nil, &res_)
 	if err != nil {
 		panic(err)
 	}
-	return res.Res0
+	return res_.Res0
 }
 
 type WithStructParamArg struct {
@@ -83,10 +84,10 @@ type WithStructParamArg struct {
 }
 
 func (s *TestCaller) WithStructParam(arg Struct) {
-	arg := &WithStructParamArg{
+	arg_ := &WithStructParamArg{
 		Arg: arg,
 	}
-	err := s.Caller.Call(context.Background(), "WithStructParam", arg, nil)
+	err := s.Caller.Call(context.Background(), "WithStructParam", arg_, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -97,12 +98,12 @@ type WithStructResultRes struct {
 }
 
 func (s *TestCaller) WithStructResult() (res0 Struct) {
-	var res WithStructResultRes
-	err := s.Caller.Call(context.Background(), "WithStructResult", nil, &res)
+	var res_ WithStructResultRes
+	err := s.Caller.Call(context.Background(), "WithStructResult", nil, &res_)
 	if err != nil {
 		panic(err)
 	}
-	return res.Res0
+	return res_.Res0
 }
 
 type WithVariadicArg struct {
@@ -110,10 +111,10 @@ type WithVariadicArg struct {
 }
 
 func (s *TestCaller) WithVariadic(args ...int) {
-	arg := &WithVariadicArg{
+	arg_ := &WithVariadicArg{
 		Args: args,
 	}
-	err := s.Caller.Call(context.Background(), "WithVariadic", arg, nil)
+	err := s.Caller.Call(context.Background(), "WithVariadic", arg_, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -124,64 +125,140 @@ type TestHandler struct {
 	Test
 }
 
+func (h *TestHandler) WithContext(ctx context.Context, stream rpc.Stream) error {
+	h.Test.WithContext(ctx)
+	return nil
+}
+
+func (h *TestHandler) WithError(ctx context.Context, stream rpc.Stream) error {
+	var err_ error
+	err_ = h.Test.WithError()
+	if err_ != nil {
+		return err_
+	}
+	return nil
+}
+
+func (h *TestHandler) WithNames(ctx context.Context, stream rpc.Stream) error {
+	var arg WithNamesArg
+	if err := stream.Recv(ctx, &arg); err != nil {
+		return err
+	}
+	var res WithNamesRes
+	var err_ error
+	res.Result_, err_ = h.Test.WithNames(ctx, arg.Param_)
+	if err_ != nil {
+		return err_
+	}
+	if err := stream.Send(ctx, &res); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *TestHandler) WithNothing(ctx context.Context, stream rpc.Stream) error {
+	h.Test.WithNothing()
+	return nil
+}
+
+func (h *TestHandler) WithParam(ctx context.Context, stream rpc.Stream) error {
+	var arg WithParamArg
+	if err := stream.Recv(ctx, &arg); err != nil {
+		return err
+	}
+	h.Test.WithParam(arg.Arg)
+	return nil
+}
+
+func (h *TestHandler) WithResult(ctx context.Context, stream rpc.Stream) error {
+	var res WithResultRes
+	res.Res0 = h.Test.WithResult()
+	if err := stream.Send(ctx, &res); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *TestHandler) WithStructParam(ctx context.Context, stream rpc.Stream) error {
+	var arg WithStructParamArg
+	if err := stream.Recv(ctx, &arg); err != nil {
+		return err
+	}
+	h.Test.WithStructParam(arg.Arg)
+	return nil
+}
+
+func (h *TestHandler) WithStructResult(ctx context.Context, stream rpc.Stream) error {
+	var res WithStructResultRes
+	res.Res0 = h.Test.WithStructResult()
+	if err := stream.Send(ctx, &res); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *TestHandler) WithVariadic(ctx context.Context, stream rpc.Stream) error {
+	var arg WithVariadicArg
+	if err := stream.Recv(ctx, &arg); err != nil {
+		return err
+	}
+	h.Test.WithVariadic(arg.Args...)
+	return nil
+}
+
+func (h *TestHandler) Methods() iter.Seq2[string, rpc.MethodFunc] {
+	return func(yield func(string, rpc.MethodFunc) bool) {
+		if !yield("WithContext", h.WithContext) {
+			return
+		}
+		if !yield("WithError", h.WithError) {
+			return
+		}
+		if !yield("WithNames", h.WithNames) {
+			return
+		}
+		if !yield("WithNothing", h.WithNothing) {
+			return
+		}
+		if !yield("WithParam", h.WithParam) {
+			return
+		}
+		if !yield("WithResult", h.WithResult) {
+			return
+		}
+		if !yield("WithStructParam", h.WithStructParam) {
+			return
+		}
+		if !yield("WithStructResult", h.WithStructResult) {
+			return
+		}
+		if !yield("WithVariadic", h.WithVariadic) {
+			return
+		}
+	}
+}
+
 func (h *TestHandler) Serve(ctx context.Context, method string, stream rpc.Stream) error {
 	switch method {
 	case "WithContext":
-		h.WithContext(ctx)
+		return h.WithContext(ctx, stream)
 	case "WithError":
-		var err error
-		err = h.WithError()
-		if err != nil {
-			return err
-		}
+		return h.WithError(ctx, stream)
 	case "WithNames":
-		var arg WithNamesArg
-		if err := stream.Recv(ctx, &arg); err != nil {
-			return err
-		}
-		var res WithNamesRes
-		var err error
-		res.Result_, err = h.WithNames(ctx, arg.Param_)
-		if err != nil {
-			return err
-		}
-		if err := stream.Send(ctx, &res); err != nil {
-			return err
-		}
+		return h.WithNames(ctx, stream)
 	case "WithNothing":
-		h.WithNothing()
+		return h.WithNothing(ctx, stream)
 	case "WithParam":
-		var arg WithParamArg
-		if err := stream.Recv(ctx, &arg); err != nil {
-			return err
-		}
-		h.WithParam(arg.Arg)
+		return h.WithParam(ctx, stream)
 	case "WithResult":
-		var res WithResultRes
-		res.Res0 = h.WithResult()
-		if err := stream.Send(ctx, &res); err != nil {
-			return err
-		}
+		return h.WithResult(ctx, stream)
 	case "WithStructParam":
-		var arg WithStructParamArg
-		if err := stream.Recv(ctx, &arg); err != nil {
-			return err
-		}
-		h.WithStructParam(arg.Arg)
+		return h.WithStructParam(ctx, stream)
 	case "WithStructResult":
-		var res WithStructResultRes
-		res.Res0 = h.WithStructResult()
-		if err := stream.Send(ctx, &res); err != nil {
-			return err
-		}
+		return h.WithStructResult(ctx, stream)
 	case "WithVariadic":
-		var arg WithVariadicArg
-		if err := stream.Recv(ctx, &arg); err != nil {
-			return err
-		}
-		h.WithVariadic(arg.Args...)
+		return h.WithVariadic(ctx, stream)
 	default:
 		return rpc.UnknownMethod(method)
 	}
-	return nil
 }

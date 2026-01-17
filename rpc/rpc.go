@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"fmt"
+	"iter"
 )
 
 type Stream interface {
@@ -11,7 +12,10 @@ type Stream interface {
 	Close() error
 }
 
+type MethodFunc func(ctx context.Context, stream Stream) error
+
 type Handler interface {
+	Methods() iter.Seq2[string, MethodFunc]
 	Serve(ctx context.Context, method string, stream Stream) error
 }
 

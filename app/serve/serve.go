@@ -13,11 +13,11 @@ import (
 
 func Main(ctx context.Context, address string) error {
 	mux := http.NewServeMux()
-	rest.RegisterHandler(mux, "/admin/", &rpc.AdminHandler{
-		Admin: rpc.LocalAdmin,
-	})
+	rest.RegisterHandler(mux, "/admin/", &rpc.AdminHandler{Admin: rpc.LocalAdmin})
 	srv := &http.Server{
-		Handler:           mux,
+		Handler: &rest.HttpLogger{
+			Next: mux,
+		},
 		ReadHeaderTimeout: time.Second * 120,
 	}
 	lc := net.ListenConfig{}
