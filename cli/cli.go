@@ -6,6 +6,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/koct9i/sand/app/hello"
+	"github.com/koct9i/sand/app/serve"
 	"github.com/koct9i/sand/app/sleep"
 )
 
@@ -48,6 +49,18 @@ func Main(ctx context.Context, args []string) (int, error) {
 						Arguments: NoArguments,
 						Action: func(ctx context.Context, c *cli.Command) error {
 							return sleep.Main(ctx, c.Duration("t"))
+						},
+					},
+					{
+						Name: "serve",
+						Arguments: []cli.Argument{
+							&cli.StringArg{
+								Name:  "address",
+								Value: "localhost:8080",
+							},
+						},
+						Action: func(ctx context.Context, c *cli.Command) error {
+							return serve.Main(ctx, c.StringArg("address"))
 						},
 					},
 				},
