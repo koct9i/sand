@@ -52,12 +52,12 @@ func (s *TestCaller) WithNothing() {
 }
 
 type WithParamArg struct {
-	Arg0 int
+	Arg int
 }
 
-func (s *TestCaller) WithParam(arg0 int) {
+func (s *TestCaller) WithParam(arg int) {
 	arg := &WithParamArg{
-		Arg0: arg0,
+		Arg: arg,
 	}
 	err := s.Caller.Call(context.Background(), "WithParam", arg, nil)
 	if err != nil {
@@ -79,12 +79,12 @@ func (s *TestCaller) WithResult() (res0 int) {
 }
 
 type WithStructParamArg struct {
-	Arg0 Struct
+	Arg Struct
 }
 
-func (s *TestCaller) WithStructParam(arg0 Struct) {
+func (s *TestCaller) WithStructParam(arg Struct) {
 	arg := &WithStructParamArg{
-		Arg0: arg0,
+		Arg: arg,
 	}
 	err := s.Caller.Call(context.Background(), "WithStructParam", arg, nil)
 	if err != nil {
@@ -155,7 +155,7 @@ func (h *TestHandler) Serve(ctx context.Context, method string, stream rpc.Strea
 		if err := stream.Recv(ctx, &arg); err != nil {
 			return err
 		}
-		h.WithParam(arg.Arg0)
+		h.WithParam(arg.Arg)
 	case "WithResult":
 		var res WithResultRes
 		res.Res0 = h.WithResult()
@@ -167,7 +167,7 @@ func (h *TestHandler) Serve(ctx context.Context, method string, stream rpc.Strea
 		if err := stream.Recv(ctx, &arg); err != nil {
 			return err
 		}
-		h.WithStructParam(arg.Arg0)
+		h.WithStructParam(arg.Arg)
 	case "WithStructResult":
 		var res WithStructResultRes
 		res.Res0 = h.WithStructResult()

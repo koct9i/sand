@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"net"
+	"time"
 
 	"net/http"
 
@@ -16,9 +17,11 @@ func Main(ctx context.Context, address string) error {
 		Admin: rpc.LocalAdmin,
 	})
 	srv := &http.Server{
-		Handler: mux,
+		Handler:           mux,
+		ReadHeaderTimeout: time.Second * 120,
 	}
-	ln, err := net.Listen("tcp", address)
+	lc := net.ListenConfig{}
+	ln, err := lc.Listen(ctx, "tcp", address)
 	if err != nil {
 		return err
 	}

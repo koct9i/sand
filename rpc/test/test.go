@@ -13,12 +13,12 @@ type Struct struct {
 // +sand:rpc
 type Test interface {
 	WithNothing()
-	WithParam(int)
+	WithParam(arg int)
 	WithResult() int
-	WithVariadic(...int)
-	WithContext(context.Context)
+	WithVariadic(args ...int)
+	WithContext(ctx context.Context)
 	WithError() error
-	WithStructParam(Struct)
+	WithStructParam(arg Struct)
 	WithStructResult() Struct
 	WithNames(ctx_ context.Context, param_ int) (result_ int, err_ error)
 }

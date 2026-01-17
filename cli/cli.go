@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 
 	"github.com/urfave/cli/v3"
 
@@ -68,8 +69,9 @@ func Main(ctx context.Context, args []string) (int, error) {
 		},
 	}
 	if err := command.Run(ctx, args); err != nil {
-		if exitErr, ok := err.(cli.ExitCoder); ok {
-			return exitErr.ExitCode(), err
+		var exitCoder cli.ExitCoder
+		if errors.As(err, &exitCoder) {
+			return exitCoder.ExitCode(), err
 		}
 		return 1, err
 	}

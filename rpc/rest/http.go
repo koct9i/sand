@@ -16,6 +16,8 @@ type Caller struct {
 	BaseURL string
 }
 
+var _ rpc.Caller = (*Caller)(nil)
+
 func (c *Caller) Call(ctx context.Context, method string, param any, result any) error {
 	httpMethod := http.MethodGet
 	var buf *bytes.Buffer
@@ -70,6 +72,8 @@ func (s *jsonStream) Close() error {
 type httpHandler struct {
 	Handler rpc.Handler
 }
+
+var _ http.Handler = (*httpHandler)(nil)
 
 func (h *httpHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	err := h.Handler.Serve(r.Context(), r.PathValue("method"), &jsonStream{

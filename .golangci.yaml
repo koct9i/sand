@@ -186,8 +186,10 @@ linters:
       check-blank: true # report about assignment of errors to blank identifier: `num, _ := strconv.Atoi(numStr)`.
       check-type-assertions: true # report about assignment of errors to blank identifier: `num, _ := strconv.Atoi(numStr)`.
       # disable-default-exclusions: true # To disable the errcheck built-in exclude list.
+      # List of functions to exclude from checking, where each entry is a single function to exclude.
+      # See https://github.com/kisielk/errcheck#excluding-functions for details.
       exclude-functions:
-        - "(io.Closer).Close"
+        - "(io.ReadCloser).Close"
 
     forbidigo:
       # Instead of matching the literal source code,
@@ -222,6 +224,7 @@ linters:
     gosec:
       excludes:
         - G101 # hard coded credentials - thinks paths are secrets.
+        - G104 # Errors unhandled - see errcheck.
 
     importas:
       # Do not allow unaliased imports of aliased packages.
