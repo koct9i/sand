@@ -10,7 +10,7 @@ type Struct struct {
 	Field int
 }
 
-//+sand:rpc
+// +sand:rpc
 type Test interface {
 	WithNothing()
 	WithParam(int)
