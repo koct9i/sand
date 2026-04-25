@@ -10,6 +10,7 @@ import (
 	"github.com/koct9i/sand/app/serve"
 	"github.com/koct9i/sand/app/sleep"
 	"github.com/koct9i/sand/app/ssh"
+	"github.com/koct9i/sand/app/store"
 )
 
 type NoMoreArguments struct {
@@ -79,6 +80,14 @@ func Main(ctx context.Context, args []string) (int, error) {
 						},
 						Action: func(ctx context.Context, c *cli.Command) error {
 							return ssh.Main(ctx, c.StringArg("address"), c.StringArg("command"))
+						},
+					},
+					{
+						Name: "store",
+						Arguments: []cli.Argument{
+						},
+						Action: func(ctx context.Context, c *cli.Command) error {
+							return store.Main(ctx)
 						},
 					},
 				},

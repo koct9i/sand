@@ -3,33 +3,21 @@ package store
 import (
 	"encoding/hex"
 	"fmt"
-	"io/fs"
 	"iter"
 	"os"
 	"strings"
 )
 
-type FS interface {
-	Stat(name string) (os.FileInfo, error)
-	ReadFile(name string) ([]byte, error)
-	WriteFile(name string, data []byte, perm fs.FileMode) error
-	ReadDir(name string) ([]os.DirEntry, error)
-	Mkdir(name string, perm fs.FileMode) error
-	Rename(oldname, newname string) error
-	RemoveAll(name string) error
-}
-
 // KV is a trivial key-value for content addressable store.
-// Path format: "<path>/<bucket>/<key><ext>".
+// Path format: "<fs>/<bucket>/<key><ext>".
 type KV struct {
 	fs   FS
-	root string
 }
 
 type Key []byte
 
-func OpenKV(fs FS, root string) KV {
-	return KV{fs: fs, root: root}
+func OpenKV(fs FS) KV {
+	return KV{fs: fs}
 }
 
 func (c *KV) prepareKey(key Key) {
@@ -40,7 +28,7 @@ func (c *KV) prepareKey(key Key) {
 }
 
 func (c *KV) LocateKey(key Key, ext string) string {
-	return fmt.Sprintf("%s%02x/%x", c.root, key[0], key) + ext
+	return fmt.Sprintf("%02x/%x%s", key[0], key, ext)
 }
 
 func (c *KV) StatKey(key Key, ext string) (os.FileInfo, error) {
@@ -59,6 +47,10 @@ func (c *KV) ReadKey(key Key, ext string) ([]byte, error) {
 func (c *KV) MkdirKey(key Key, ext string, perm os.FileMode) error {
 	c.prepareKey(key)
 	return c.fs.Mkdir(c.LocateKey(key, ext), perm)
+}
+
+func (c *KV) SubKey(key Key, ext string) (FS, error) {
+	return c.fs.Sub(c.LocateKey(key, ext))
 }
 
 func (c *KV) RenameKey(key Key, oldext, newext string) error {
