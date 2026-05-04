@@ -55,15 +55,36 @@ func Main(ctx context.Context, args []string) (int, error) {
 						},
 					},
 					{
+						Name: "start-systemd",
+						Action: func(ctx context.Context, c *cli.Command) error {
+							return serve.StartSystemd(ctx)
+						},
+					},
+					{
+						Name: "stop-systemd",
+						Action: func(ctx context.Context, c *cli.Command) error {
+							return serve.StopSystemd(ctx)
+						},
+					},
+					{
+						Name: "serve-systemd",
+						Action: func(ctx context.Context, c *cli.Command) error {
+							return serve.ServeSystemd(ctx)
+						},
+					},
+					{
 						Name: "serve",
-						Arguments: []cli.Argument{
-							&cli.StringArg{
+						Flags: []cli.Flag{
+							&cli.BoolFlag{
+								Name: "systemd-socket",
+							},
+							&cli.StringFlag{
 								Name:  "address",
 								Value: "localhost:8080",
 							},
 						},
 						Action: func(ctx context.Context, c *cli.Command) error {
-							return serve.Main(ctx, c.StringArg("address"))
+							return serve.Main(ctx, c.String("address"))
 						},
 					},
 					{
