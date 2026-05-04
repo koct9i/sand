@@ -3,67 +3,104 @@ package store
 import (
 	"encoding/hex"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"strings"
 )
 
-// KV is a trivial key-value for content addressable store.
-// Path format: "<fs>/<bucket>/<key><ext>".
-type KV struct {
-	fs   FS
-}
-
 type Key []byte
 
-func OpenKV(fs FS) KV {
-	return KV{fs: fs}
+// KV is a trivial key-value for content addressable store.
+type KV interface {
+	LocateKey(key Key, ext string) string
+	StatKey(key Key, ext string) (os.FileInfo, error)
+	ChmodKey(key Key, ext string, mode os.FileMode) error
+	OpenKey(key Key, ext string) (io.ReadCloser, error)
+	CreateKey(key Key, ext string) (io.WriteCloser, error)
+	ReadKey(key Key, ext string) ([]byte, error)
+	WriteKey(key Key, ext string, data []byte, perm os.FileMode) error
+	MkdirKey(key Key, ext string, perm os.FileMode) error
+	RenameKey(key Key, oldext, newext string) error
+	RemoveKey(key Key, ext string) error
+	IterKeys(ext string) iter.Seq2[Key, os.FileInfo]
+	OpenRootKey(key Key, ext string) (Root, error)
 }
 
-func (c *KV) prepareKey(key Key) {
+// rootKV implements KV in fs root: "<root>/<key0>/<key><ext>".
+type rootKV struct {
+	root Root
+}
+
+func CreateRootKV(root Root, name string) error {
+	return root.Mkdir(name, 0o700)
+}
+
+func OpenRootKV(root Root) (*rootKV, error) {
+	if stat, err := root.Stat("."); err != nil {
+		return nil, fmt.Errorf("kv root %v: %w", root.Name(), err)
+	} else if !stat.IsDir() {
+		return nil, fmt.Errorf("kv root %v is not a directory", root.Name())
+	}
+	return &rootKV{root: root}, nil
+}
+
+func (c *rootKV) prepareKey(key Key) {
 	bucket := fmt.Sprintf("%02x", key[0])
-	if _, err := c.fs.Stat(bucket); err != nil {
-		c.fs.Mkdir(bucket, 0o700) //nolint:errcheck //ok
+	if _, err := c.root.Stat(bucket); err != nil {
+		c.root.Mkdir(bucket, 0o700) //nolint:errcheck //ok
 	}
 }
 
-func (c *KV) LocateKey(key Key, ext string) string {
-	return fmt.Sprintf("%02x/%x%s", key[0], key, ext)
+func (c *rootKV) LocateKey(key Key, ext string) string {
+	return fmt.Sprintf("%02x/%x%s", key[0], key[1:], ext)
 }
 
-func (c *KV) StatKey(key Key, ext string) (os.FileInfo, error) {
-	return c.fs.Stat(c.LocateKey(key, ext))
+func (c *rootKV) StatKey(key Key, ext string) (os.FileInfo, error) {
+	return c.root.Stat(c.LocateKey(key, ext))
 }
 
-func (c *KV) WriteKey(key Key, ext string, data []byte, perm os.FileMode) error {
+func (c *rootKV) ChmodKey(key Key, ext string, mode os.FileMode) error {
+	return c.root.Chmod(c.LocateKey(key, ext), mode)
+}
+
+func (c *rootKV) OpenKey(key Key, ext string) (io.ReadCloser, error) {
+	return c.root.Open(c.LocateKey(key, ext))
+}
+
+func (c *rootKV) CreateKey(key Key, ext string) (io.WriteCloser, error) {
+	return c.root.OpenFile(c.LocateKey(key, ext), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0x600)
+}
+
+func (c *rootKV) ReadKey(key Key, ext string) ([]byte, error) {
+	return c.root.ReadFile(c.LocateKey(key, ext))
+}
+
+func (c *rootKV) WriteKey(key Key, ext string, data []byte, perm os.FileMode) error {
 	c.prepareKey(key)
-	return c.fs.WriteFile(c.LocateKey(key, ext), data, perm)
+	return c.root.WriteFile(c.LocateKey(key, ext), data, perm)
 }
 
-func (c *KV) ReadKey(key Key, ext string) ([]byte, error) {
-	return c.fs.ReadFile(c.LocateKey(key, ext))
-}
-
-func (c *KV) MkdirKey(key Key, ext string, perm os.FileMode) error {
+func (c *rootKV) MkdirKey(key Key, ext string, perm os.FileMode) error {
 	c.prepareKey(key)
-	return c.fs.Mkdir(c.LocateKey(key, ext), perm)
+	return c.root.Mkdir(c.LocateKey(key, ext), perm)
 }
 
-func (c *KV) SubKey(key Key, ext string) (FS, error) {
-	return c.fs.Sub(c.LocateKey(key, ext))
+func (c *rootKV) OpenRootKey(key Key, ext string) (Root, error) {
+	return c.root.OpenRoot(c.LocateKey(key, ext))
 }
 
-func (c *KV) RenameKey(key Key, oldext, newext string) error {
-	return c.fs.Rename(c.LocateKey(key, oldext), c.LocateKey(key, newext))
+func (c *rootKV) RenameKey(key Key, oldext, newext string) error {
+	return c.root.Rename(c.LocateKey(key, oldext), c.LocateKey(key, newext))
 }
 
-func (c *KV) RemoveKey(key Key, ext string) error {
-	return c.fs.RemoveAll(c.LocateKey(key, ext))
+func (c *rootKV) RemoveKey(key Key, ext string) error {
+	return c.root.RemoveAll(c.LocateKey(key, ext))
 }
 
-func (c *KV) IterKeys(ext string) iter.Seq2[Key, os.FileInfo] {
+func (c *rootKV) IterKeys(ext string) iter.Seq2[Key, os.FileInfo] {
 	return func(yield func(Key, os.FileInfo) bool) {
-		buckets, err := c.fs.ReadDir(".")
+		buckets, err := c.root.ReadDir(".")
 		if err != nil {
 			return
 		}
@@ -71,7 +108,7 @@ func (c *KV) IterKeys(ext string) iter.Seq2[Key, os.FileInfo] {
 			if !bucket.IsDir() || len(bucket.Name()) != 2 {
 				continue
 			}
-			entries, err := c.fs.ReadDir(bucket.Name())
+			entries, err := c.root.ReadDir(bucket.Name())
 			if err != nil {
 				continue
 			}
@@ -79,7 +116,7 @@ func (c *KV) IterKeys(ext string) iter.Seq2[Key, os.FileInfo] {
 				if !strings.HasSuffix(entry.Name(), ext) {
 					continue
 				}
-				key, err := hex.DecodeString(strings.TrimSuffix(entry.Name(), ext))
+				key, err := hex.DecodeString(bucket.Name()+strings.TrimSuffix(entry.Name(), ext))
 				if err != nil {
 					continue
 				}

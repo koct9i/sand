@@ -83,9 +83,8 @@ func Main(ctx context.Context, args []string) (int, error) {
 						},
 					},
 					{
-						Name: "store",
-						Arguments: []cli.Argument{
-						},
+						Name:      "store",
+						Arguments: []cli.Argument{},
 						Action: func(ctx context.Context, c *cli.Command) error {
 							return store.Main(ctx)
 						},

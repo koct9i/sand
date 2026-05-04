@@ -1,6 +1,7 @@
 package store
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,53 +13,75 @@ var (
 	LocalName = "sand"
 )
 
-type FS interface {
-	Stat(name string) (os.FileInfo, error)
+type Root interface {
+	Name() string
+	Close() error
+	OpenRoot(name string) (Root, error)
+
+	Stat(name string) (fs.FileInfo, error)
+	Chmod(name string, mode fs.FileMode) error
+	Open(name string) (io.ReadCloser, error)
+	OpenFile(name string, flag int, perm fs.FileMode) (io.ReadWriteCloser, error)
 	ReadFile(name string) ([]byte, error)
 	WriteFile(name string, data []byte, perm fs.FileMode) error
 	ReadDir(name string) ([]os.DirEntry, error)
-	Sub(name string) (FS, error)
 	Mkdir(name string, perm fs.FileMode) error
 	Rename(oldname, newname string) error
 	RemoveAll(name string) error
 }
 
-type LocalFS struct {
+type localRoot struct {
 	*os.Root
 }
 
-func (f LocalFS) ReadDir(name string) ([]os.DirEntry, error) {
+func (f localRoot) Open(name string) (io.ReadCloser, error) {
+	return f.Root.Open(name)
+}
+
+func (f localRoot) OpenFile(name string, flag int, perm fs.FileMode) (io.ReadWriteCloser, error) {
+	return f.Root.OpenFile(name, flag, perm)
+}
+
+func (f localRoot) ReadDir(name string) ([]os.DirEntry, error) {
 	return fs.ReadDir(f.FS(), name)
 }
 
-func (f LocalFS) Sub(name string) (FS, error) {
-	root, err := f.OpenRoot(name)
+func (f localRoot) OpenRoot(name string) (Root, error) {
+	root, err := f.Root.OpenRoot(name)
 	if err != nil {
 		return nil, err
 	}
-	return LocalFS{root}, nil
+	return localRoot{root}, nil
 }
 
-func OpenLocalFS(path string) (FS, error) {
-	root, err := os.OpenRoot(path)
+func OpenLocalRoot(name string) (Root, error) {
+	root, err := os.OpenRoot(name)
 	if err != nil {
 		return nil, err
 	}
-	return LocalFS{Root: root}, nil
+	return localRoot{Root: root}, nil
 }
 
-func OpenLocalKV(path string) (KV, error) {
-	err := os.MkdirAll(path, 0o700)
+func OpenLocalKV(name string) (KV, error) {
+	err := os.MkdirAll(name, 0o700)
 	if err != nil {
-		return KV{}, err
+		return nil, err
 	}
-	store, err := OpenLocalFS(path)
+	root, err := OpenLocalRoot(name)
 	if err != nil {
-		return KV{}, err
+		return nil, err
 	}
-	return OpenKV(store), nil
+	return OpenRootKV(root)
 }
 
 func OpenHomeKV() (KV, error) {
 	return OpenLocalKV(filepath.Join(xdg.CacheHome, LocalName))
+}
+
+func OpenRuntimeRoot() (Root, error) {
+	runtimeRoot := filepath.Join(xdg.RuntimeDir, LocalName)
+	if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
+		return nil, err
+	}
+	return OpenLocalRoot(runtimeRoot)
 }

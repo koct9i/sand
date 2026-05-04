@@ -3,10 +3,10 @@ package ssh
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"os"
-	"crypto/sha256"
 
 	"github.com/koct9i/sand/ssh"
 	"github.com/koct9i/sand/store"
@@ -43,6 +43,10 @@ func Main(ctx context.Context, host, command string) error {
 	remote, err := ssh.NewRemote(ctx, host)
 	if err != nil {
 		return err
+	}
+
+	if err := remote.CreateHomeKV(); err != nil {
+		log.Print("error", err)
 	}
 
 	kv, err := remote.OpenHomeKV()

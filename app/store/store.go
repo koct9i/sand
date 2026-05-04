@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/koct9i/sand/store"
 	"github.com/koct9i/sand/ssh"
+	"github.com/koct9i/sand/store"
 )
 
 func Main(ctx context.Context) error {
@@ -18,7 +18,7 @@ func Main(ctx context.Context) error {
 		return err
 	}
 	key := []byte("abcde")
-	err = kv.WriteKey(key, ".test",  []byte("hello"), 0o600)
+	err = kv.WriteKey(key, ".test", []byte("hello"), 0o600)
 	if err != nil {
 		return err
 	}
