@@ -1,7 +1,7 @@
 package test
 
 import (
-	"context"
+	// "context"
 )
 
 //go:generate go run ../gen .
@@ -15,10 +15,10 @@ type Test interface {
 	WithNothing()
 	WithParam(arg int)
 	WithResult() int
-	WithVariadic(args ...int)
-	WithContext(ctx context.Context)
+	// WithVariadic(args ...int)
+	// WithContext(ctx context.Context)
 	WithError() error
-	WithStructParam(arg Struct)
-	WithStructResult() Struct
-	WithNames(ctx_ context.Context, param_ int) (result_ int, err_ error)
+	// WithStructParam(arg Struct)
+	// WithStructResult() Struct
+	// WithNames(ctx_ context.Context, param_ int) (result_ int, err_ error)
 }

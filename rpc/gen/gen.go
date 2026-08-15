@@ -48,6 +48,8 @@ type Param struct {
 	Name       string
 	PublicName string
 	Type       *types.Type
+	Get        func(arg string) string
+	Set        func(val, arg string) string
 	Comma      string
 	IsContext  bool
 	IsError    bool
@@ -79,6 +81,37 @@ type {{$method.Name}}Arg struct {
 	{{- if $param.IsContext}}{{continue}}{{end}}
 	{{$param.PublicName}} {{$param.Type|raw}}
 	{{- end}}
+}
+
+func (a *{{$method.Name}}Arg) Get(key string) string {
+	switch key {
+	{{- range $param := $method.Arguments}}
+	case "{{$param.PublicName}}":
+		{{- if $param.Get }}
+		return {{ print "a." $param.PublicName | call $param.Get }}
+		{{- else }}
+		return a.{{$param.PublicName}}
+		{{- end }}
+	{{- end}}
+	default:
+		return ""
+	}
+}
+
+func (a *{{$method.Name}}Arg) Set(key, value string) error {
+	switch key {
+	{{- range $param := $method.Arguments}}
+	case "{{$param.PublicName}}":
+		{{- if $param.Set }}
+		{{- print "a." $param.PublicName | call $param.Set "value" }}
+		{{- else }}
+		a.{{$param.PublicName}} = value
+		{{- end }}
+		return nil
+	{{- end}}
+	default:
+		return {{$.Imports.UnknownMethod|raw}}(key)
+	}
 }
 {{- end}}
 {{- if $method.WithResults}}
@@ -260,6 +293,16 @@ func (g *rpcGenerator) GenerateType(c *generator.Context, t *types.Type, w io.Wr
 				p.Name = fmt.Sprintf("arg%v", index)
 			}
 			p.PublicName = namer.IC(p.Name)
+			switch p.Type.Name.Name {
+			case "int":
+				g.importsTracker.AddSymbol(types.ParseFullyQualifiedName("strconv.Itoa"))
+				p.Get = func(arg string) string { return fmt.Sprintf("strconv.Itoa(%s)", arg) }
+				p.Set = func(val, arg string) string { return fmt.Sprintf(`if val, err := strconv.ParseInt(%s, 0, 0); err != nil { return err } else { %s = int(val) }`, val, arg) }
+			case "bool":
+				g.importsTracker.AddSymbol(types.ParseFullyQualifiedName("strconv.FormatBool"))
+				p.Get = func(arg string) string { return fmt.Sprintf("strconv.FormatBool(%s)", arg) }
+				p.Set = func(val, arg string) string { return fmt.Sprintf(`if val, err := strconv.ParseBool(%s); err != nil { return err } else { %s = val }`, val, arg) }
+			}
 			if !p.IsContext {
 				method.WithArguments = true
 			}

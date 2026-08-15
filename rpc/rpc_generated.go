@@ -98,6 +98,30 @@ type ListArg struct {
 	Target string
 }
 
+func (a *ListArg) Get(key string) string {
+	switch key {
+	case "Node":
+		return a.Node
+	case "Target":
+		return a.Target
+	default:
+		return ""
+	}
+}
+
+func (a *ListArg) Set(key, value string) error {
+	switch key {
+	case "Node":
+		a.Node = value
+		return nil
+	case "Target":
+		a.Target = value
+		return nil
+	default:
+		return UnknownMethod(key)
+	}
+}
+
 type ListRes struct {
 	Res0 []string
 }

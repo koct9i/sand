@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/koct9i/sand/rpc"
 )
@@ -58,15 +59,34 @@ type jsonStream struct {
 }
 
 func (s *jsonStream) Recv(ctx context.Context, msg any) error {
-	return json.NewDecoder(s.rc).Decode(msg)
+	decoder := json.NewDecoder(s.rc)
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(msg)
 }
 
 func (s *jsonStream) Send(ctx context.Context, msg any) error {
-	return json.NewEncoder(s.w).Encode(msg)
+	encoder := json.NewEncoder(s.w)
+	return encoder.Encode(msg)
 }
 
 func (s *jsonStream) Close() error {
 	return s.rc.Close()
+}
+
+type formStream struct {
+	values url.Values
+}
+
+func (s *formStream) Recv(ctx context.Context, msg any) error {
+	return nil
+}
+
+func (s *formStream) Send(ctx context.Context, msg any) error {
+	return nil
+}
+
+func (s *formStream) Close() error {
+	return nil
 }
 
 type httpMethodFunc rpc.MethodFunc
@@ -86,6 +106,6 @@ func (f httpMethodFunc) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 func RegisterHandler(mux *http.ServeMux, path string, handler rpc.Handler) {
 	for method, methodFunc := range handler.Methods() {
-		mux.Handle(path+method, httpMethodFunc(methodFunc))
+		mux.Handle("POST "+path+method, httpMethodFunc(methodFunc))
 	}
 }
