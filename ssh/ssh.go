@@ -3,8 +3,6 @@ package ssh
 import (
 	"context"
 	"fmt"
-	"io"
-	"io/fs"
 	"net"
 	"os"
 
@@ -18,12 +16,6 @@ import (
 
 type Remote struct {
 	ssh *gossh.Client
-}
-
-type remoteRoot struct {
-	ssh    *gossh.Client
-	sftp   *gosftp.Client
-	prefix string
 }
 
 func NewRemote(ctx context.Context, address string) (*Remote, error) {
@@ -71,129 +63,38 @@ func (r *Remote) Close() error {
 	return r.ssh.Close()
 }
 
-func (r *Remote) OpenRoot(name string) (store.Root, error) {
+func (r *Remote) OpenDir(ctx context.Context, name string) (store.Root, error) {
 	if name != "" && name[len(name)-1] != '/' {
 		name += "/"
 	}
-	sftp, err := gosftp.NewClient(context.Background(), r.ssh)
+	sftp, err := gosftp.NewClient(ctx, r.ssh)
 	if err != nil {
 		return nil, err
+	}
+	if stat, err := sftp.Stat("."); err != nil {
+		return nil, fmt.Errorf("kv root %v: %w", name, err)
+	} else if !stat.IsDir() {
+		return nil, fmt.Errorf("kv root %v is not a directory", name)
 	}
 	return &remoteRoot{ssh: r.ssh, sftp: sftp, prefix: name}, nil
 }
 
-func (r *Remote) OpenKV(name string) (store.KV, error) {
-	root, err := r.OpenRoot(name)
+func (r *Remote) OpenKV(ctx context.Context, name string, opts store.KVOptions) (store.KV, error) {
+	root, err := r.OpenDir(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	return store.OpenRootKV(root)
+	return store.OpenRootKV(root, name, opts)
 }
 
-func (r *Remote) CreateHomeKV() error {
-	root, err := r.OpenRoot("")
+func (r *Remote) OpenHomeKV(ctx context.Context) (store.KV, error) {
+	root, err := r.OpenDir(ctx, "")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer root.Close()
-	return store.CreateRootKV(root, ".cache/sand")
-}
-
-func (r *Remote) OpenHomeKV() (store.KV, error) {
-	return r.OpenKV(".cache/sand")
+	return store.OpenRootKV(root, store.RemoteCachePath, store.KVOptions{Create: true})
 }
 
 func (r *Remote) NewSession() (*gossh.Session, error) {
 	return r.ssh.NewSession()
-}
-
-func (r *remoteRoot) Name() string {
-	if r.prefix[0] == '/' {
-		return fmt.Sprintf("sftp://%s%s", r.ssh.RemoteAddr().String(), r.prefix)
-	}
-	return fmt.Sprintf("sftp://%s/~%s/%s", r.ssh.RemoteAddr().String(), r.ssh.User(), r.prefix)
-}
-
-func (r *remoteRoot) Close() error {
-	return r.sftp.Close()
-}
-
-func (r *remoteRoot) Stat(name string) (os.FileInfo, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.Stat(r.prefix + name)
-}
-
-func (r *remoteRoot) Chmod(name string, mode fs.FileMode) error {
-	if !fs.ValidPath(name) {
-		return &fs.PathError{Op: "chmod", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.Chmod(r.prefix+name, mode)
-}
-
-func (r *remoteRoot) Open(name string) (io.ReadCloser, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.Open(name)
-}
-
-func (r *remoteRoot) OpenFile(name string, flag int, mode fs.FileMode) (io.ReadWriteCloser, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "openfile", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.OpenFile(name, flag, mode)
-}
-
-func (r *remoteRoot) ReadFile(name string) ([]byte, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "read", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.ReadFile(r.prefix + name)
-}
-
-func (r *remoteRoot) WriteFile(name string, data []byte, perm fs.FileMode) error {
-	if !fs.ValidPath(name) {
-		return &fs.PathError{Op: "write", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.WriteFile(r.prefix+name, data, perm)
-}
-
-func (r *remoteRoot) ReadDir(name string) ([]os.DirEntry, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.ReadDir(r.prefix + name)
-}
-
-func (r *remoteRoot) OpenRoot(name string) (store.Root, error) {
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "sub", Path: name, Err: fs.ErrInvalid}
-	}
-	return &remoteRoot{ssh: r.ssh, sftp: r.sftp, prefix: r.prefix + name}, nil
-}
-
-func (r *remoteRoot) Mkdir(name string, perm fs.FileMode) error {
-	if !fs.ValidPath(name) {
-		return &fs.PathError{Op: "mkdir", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.Mkdir(r.prefix+name, perm)
-}
-
-func (r *remoteRoot) Rename(oldname, newname string) error {
-	if !fs.ValidPath(oldname) {
-		return &fs.PathError{Op: "rename", Path: oldname, Err: fs.ErrInvalid}
-	}
-	if !fs.ValidPath(newname) {
-		return &fs.PathError{Op: "rename", Path: newname, Err: fs.ErrInvalid}
-	}
-	return r.sftp.Rename(r.prefix+oldname, r.prefix+newname)
-}
-
-func (r *remoteRoot) RemoveAll(name string) error {
-	if !fs.ValidPath(name) {
-		return &fs.PathError{Op: "remove", Path: name, Err: fs.ErrInvalid}
-	}
-	return r.sftp.Remove(r.prefix + name)
 }

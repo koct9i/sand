@@ -10,13 +10,13 @@ import (
 )
 
 var (
-	LocalName = "sand"
+	LocalCacheName  = "sand"
+	RemoteCachePath = ".cache/sand"
 )
 
 type Root interface {
 	Name() string
 	Close() error
-	OpenRoot(name string) (Root, error)
 
 	Stat(name string) (fs.FileInfo, error)
 	Chmod(name string, mode fs.FileMode) error
@@ -24,6 +24,7 @@ type Root interface {
 	OpenFile(name string, flag int, perm fs.FileMode) (io.ReadWriteCloser, error)
 	ReadFile(name string) ([]byte, error)
 	WriteFile(name string, data []byte, perm fs.FileMode) error
+	OpenDir(name string) (Root, error)
 	ReadDir(name string) ([]os.DirEntry, error)
 	Mkdir(name string, perm fs.FileMode) error
 	Rename(oldname, newname string) error
@@ -46,7 +47,7 @@ func (f localRoot) ReadDir(name string) ([]os.DirEntry, error) {
 	return fs.ReadDir(f.FS(), name)
 }
 
-func (f localRoot) OpenRoot(name string) (Root, error) {
+func (f localRoot) OpenDir(name string) (Root, error) {
 	root, err := f.Root.OpenRoot(name)
 	if err != nil {
 		return nil, err
@@ -62,24 +63,26 @@ func OpenLocalRoot(name string) (Root, error) {
 	return localRoot{Root: root}, nil
 }
 
-func OpenLocalKV(name string) (KV, error) {
-	err := os.MkdirAll(name, 0o700)
-	if err != nil {
-		return nil, err
+func OpenLocalKV(name string, opts KVOptions) (KV, error) {
+	if opts.Create {
+		err := os.MkdirAll(name, 0o700)
+		if err != nil {
+			return nil, err
+		}
 	}
 	root, err := OpenLocalRoot(name)
 	if err != nil {
 		return nil, err
 	}
-	return OpenRootKV(root)
+	return OpenRootKV(root, "", opts)
 }
 
 func OpenHomeKV() (KV, error) {
-	return OpenLocalKV(filepath.Join(xdg.CacheHome, LocalName))
+	return OpenLocalKV(filepath.Join(xdg.CacheHome, LocalCacheName), KVOptions{Create: true})
 }
 
 func OpenRuntimeRoot() (Root, error) {
-	runtimeRoot := filepath.Join(xdg.RuntimeDir, LocalName)
+	runtimeRoot := filepath.Join(xdg.RuntimeDir, LocalCacheName)
 	if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
 		return nil, err
 	}

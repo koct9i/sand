@@ -45,11 +45,7 @@ func Main(ctx context.Context, host, command string) error {
 		return err
 	}
 
-	if err := remote.CreateHomeKV(); err != nil {
-		log.Print("error", err)
-	}
-
-	kv, err := remote.OpenHomeKV()
+	kv, err := remote.OpenHomeKV(ctx)
 	if err != nil {
 		return err
 	}

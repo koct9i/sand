@@ -13,7 +13,7 @@ func Main(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	kv, err := remote.OpenHomeKV()
+	kv, err := remote.OpenKV(ctx, store.RemoteCachePath, store.KVOptions{Create: true})
 	if err != nil {
 		return err
 	}

@@ -24,7 +24,11 @@ type KV interface {
 	RenameKey(key Key, oldext, newext string) error
 	RemoveKey(key Key, ext string) error
 	IterKeys(ext string) iter.Seq2[Key, os.FileInfo]
-	OpenRootKey(key Key, ext string) (Root, error)
+	OpenDirKey(key Key, ext string) (Root, error)
+}
+
+type KVOptions struct {
+	Create bool
 }
 
 // rootKV implements KV in fs root: "<root>/<key0>/<key><ext>".
@@ -32,15 +36,18 @@ type rootKV struct {
 	root Root
 }
 
-func CreateRootKV(root Root, name string) error {
-	return root.Mkdir(name, 0o700)
-}
-
-func OpenRootKV(root Root) (*rootKV, error) {
-	if stat, err := root.Stat("."); err != nil {
-		return nil, fmt.Errorf("kv root %v: %w", root.Name(), err)
-	} else if !stat.IsDir() {
-		return nil, fmt.Errorf("kv root %v is not a directory", root.Name())
+func OpenRootKV(root Root, name string, opts KVOptions) (*rootKV, error) {
+	if name != "" {
+		kvRoot, err := root.OpenDir(name)
+		if err != nil && os.IsNotExist(err) && opts.Create {
+			if err = root.Mkdir(name, 0o700); err == nil {
+				kvRoot, err = root.OpenDir(name)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		root = kvRoot
 	}
 	return &rootKV{root: root}, nil
 }
@@ -86,8 +93,8 @@ func (c *rootKV) MkdirKey(key Key, ext string, perm os.FileMode) error {
 	return c.root.Mkdir(c.LocateKey(key, ext), perm)
 }
 
-func (c *rootKV) OpenRootKey(key Key, ext string) (Root, error) {
-	return c.root.OpenRoot(c.LocateKey(key, ext))
+func (c *rootKV) OpenDirKey(key Key, ext string) (Root, error) {
+	return c.root.OpenDir(c.LocateKey(key, ext))
 }
 
 func (c *rootKV) RenameKey(key Key, oldext, newext string) error {
