@@ -13,6 +13,7 @@ import (
 
 	"github.com/koct9i/sand/log"
 
+	"github.com/koct9i/sand/app/ginkgo"
 	"github.com/koct9i/sand/app/hello"
 	"github.com/koct9i/sand/app/serve"
 	"github.com/koct9i/sand/app/sleep"
@@ -77,6 +78,7 @@ func Main(ctx context.Context, args []string) (int, error) {
 			{
 				Name: "app",
 				Commands: []*cli.Command{
+					ginkgo.NewCommand(),
 					{
 						Name: "hello",
 						Action: func(ctx context.Context, c *cli.Command) error {
