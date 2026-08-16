@@ -3,7 +3,9 @@ module github.com/koct9i/sand
 go 1.26.6
 
 require (
+	github.com/abrander/colorjson v0.0.0-20230613094054-36675efdd74f
 	github.com/adrg/xdg v0.5.3
+	github.com/go-logr/logr v1.4.4
 	github.com/google/uuid v1.6.0
 	github.com/pkg/sftp/v2 v2.0.0-alpha2
 	github.com/urfave/cli/v3 v3.10.1

@@ -2,15 +2,18 @@ package ssh
 
 import (
 	"fmt"
-	"log"
 	"regexp"
 	"strings"
+
+	"github.com/go-logr/logr"
 
 	gossh "golang.org/x/crypto/ssh"
 )
 
 type Command struct {
 	*gossh.Session
+
+	Logger logr.Logger
 
 	Path string
 	Args []string
@@ -67,8 +70,18 @@ func (c *Command) Start() error {
 			cmd.WriteQuote(` '`, filename, `'`)
 		}
 	}
-	log.Printf("Starting remote command %q", cmd.String())
+	c.Logger.Info("Remote command starting", "command", cmd.String())
 	return c.Session.Start(cmd.String())
+}
+
+func (c *Command) Wait() error {
+	err := c.Session.Wait()
+	if err == nil {
+		c.Logger.Info("Remote command finished")
+	} else {
+		c.Logger.Error(err, "Remote command failed")
+	}
+	return err
 }
 
 func (c *Command) Run() error {

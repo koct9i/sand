@@ -1,7 +1,11 @@
+github.com/abrander/colorjson v0.0.0-20230613094054-36675efdd74f h1:IpvS7VXlwQPqUbxglAlmiNatWwQYYM7r/0eAJ+yPwts=
+github.com/abrander/colorjson v0.0.0-20230613094054-36675efdd74f/go.mod h1:2sHTZ8uq0X6Je582tJA/f6n/gOPZXb8s+/cQ6NHhb4s=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=
 github.com/adrg/xdg v0.5.3/go.mod h1:nlTsY+NNiCBGCK2tpm09vRqfVzrc2fLmXGpBLF0zlTQ=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/go-logr/logr v1.4.4 h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=
+github.com/go-logr/logr v1.4.4/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/pkg/sftp/v2 v2.0.0-alpha2 h1:BNLMebIYmcTEqlM30TFEaIc3ICpeaPVCeDniARthgo4=

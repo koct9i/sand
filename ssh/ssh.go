@@ -3,10 +3,11 @@ package ssh
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"strings"
+
+	"github.com/go-logr/logr"
 
 	gossh "golang.org/x/crypto/ssh"
 	gosshagent "golang.org/x/crypto/ssh/agent"
@@ -18,6 +19,7 @@ import (
 
 type Remote struct {
 	ssh *gossh.Client
+	logger logr.Logger
 }
 
 func NewRemote(ctx context.Context, address string) (*Remote, error) {
@@ -54,6 +56,7 @@ func NewRemote(ctx context.Context, address string) (*Remote, error) {
 
 	return &Remote{
 		ssh: ssh,
+		logger: logr.FromContextOrDiscard(ctx).WithValues("address", address),
 	}, nil
 }
 
@@ -79,8 +82,13 @@ func (r *Remote) OpenDir(ctx context.Context, name string) (store.Root, error) {
 	} else if !stat.IsDir() {
 		return nil, fmt.Errorf("kv root %v is not a directory", name)
 	}
-	log.Printf("Open remote dir %q %q", r.Name(), prefix)
-	return &remoteRoot{ssh: r.ssh, sftp: sftp, prefix: prefix}, nil
+	r.logger.Info("Open remote dir", "prefix", prefix)
+	return &remoteRoot{
+		ssh: r.ssh,
+		sftp: sftp,
+		logger: r.logger.WithValues("prefix", prefix),
+		prefix: prefix,
+	}, nil
 }
 
 func (r *Remote) OpenKV(ctx context.Context, name string, opts store.KVOptions) (store.KV, error) {
@@ -104,5 +112,10 @@ func (r *Remote) NewCommand(name string, args ...string) (*Command, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Command{Session: s, Path: name, Args: append([]string{name}, args...)}, nil
+	return &Command{
+		Session: s,
+		Logger: r.logger,
+		Path: name,
+		Args: append([]string{name}, args...),
+	}, nil
 }

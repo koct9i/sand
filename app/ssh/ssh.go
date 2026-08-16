@@ -1,14 +1,12 @@
 package ssh
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"fmt"
-	"log"
 	"os"
 	"path"
 
+	"github.com/go-logr/logr"
 	"github.com/koct9i/sand/ssh"
 	"github.com/koct9i/sand/store"
 )
@@ -41,6 +39,8 @@ func UploadSelf(kv store.KV) (string, error) {
 }
 
 func Main(ctx context.Context, host string, command []string) error {
+	logger := logr.FromContextOrDiscard(ctx)
+
 	remote, err := ssh.NewRemote(ctx, host)
 	if err != nil {
 		return err
@@ -55,21 +55,19 @@ func Main(ctx context.Context, host string, command []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(name)
 
-	cmd, err := remote.NewCommand("~/"+name, command...)
+	cmd, err := remote.NewCommand(name, command...)
 	if err != nil {
 		return err
 	}
 	cmd.Args[0] = "sand"
 	defer cmd.Close()
 
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		log.Fatal("Failed to run: " + err.Error())
+		logger.Error(err, "Failed to run")
 	}
-	fmt.Println(buf.String())
 
 	return nil
 }
