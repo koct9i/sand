@@ -7,18 +7,19 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 
 	"github.com/koct9i/sand/ssh"
 	"github.com/koct9i/sand/store"
 )
 
 func UploadSelf(kv store.KV) (string, error) {
-	path, err := os.Executable()
+	self, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(self)
 	if err != nil {
 		return "", err
 	}
@@ -36,10 +37,10 @@ func UploadSelf(kv store.KV) (string, error) {
 			return "", err
 		}
 	}
-	return ".cache/sand/" + kv.LocateKey(key, ".sand"), nil
+	return path.Join(store.RemoteCachePath, kv.LocateKey(key, ".sand")), nil
 }
 
-func Main(ctx context.Context, host, command string) error {
+func Main(ctx context.Context, host string, command []string) error {
 	remote, err := ssh.NewRemote(ctx, host)
 	if err != nil {
 		return err
@@ -56,15 +57,16 @@ func Main(ctx context.Context, host, command string) error {
 	}
 	fmt.Println(name)
 
-	sshSession, err := remote.NewSession()
+	cmd, err := remote.NewCommand("~/"+name, command...)
 	if err != nil {
 		return err
 	}
-	defer sshSession.Close()
+	cmd.Args[0] = "sand"
+	defer cmd.Close()
 
 	var buf bytes.Buffer
-	sshSession.Stdout = &buf
-	if err := sshSession.Run("~/" + name + " " + command); err != nil {
+	cmd.Stdout = &buf
+	if err := cmd.Run(); err != nil {
 		log.Fatal("Failed to run: " + err.Error())
 	}
 	fmt.Println(buf.String())

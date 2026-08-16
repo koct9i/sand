@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
+	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
 
@@ -89,7 +91,12 @@ func (r *remoteRoot) OpenDir(name string) (store.Root, error) {
 	} else if !stat.IsDir() {
 		return nil, &fs.PathError{Op: "opendir", Path: name, Err: fs.ErrInvalid}
 	}
-	return &remoteRoot{ssh: r.ssh, sftp: r.sftp, prefix: r.prefix + name}, nil
+	prefix := r.prefix + name
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	log.Printf("Open dir %q", prefix)
+	return &remoteRoot{ssh: r.ssh, sftp: r.sftp, prefix: prefix}, nil
 }
 
 func (r *remoteRoot) Mkdir(name string, perm fs.FileMode) error {

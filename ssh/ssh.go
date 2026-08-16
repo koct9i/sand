@@ -3,8 +3,10 @@ package ssh
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os"
+	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
 	gosshagent "golang.org/x/crypto/ssh/agent"
@@ -64,19 +66,21 @@ func (r *Remote) Close() error {
 }
 
 func (r *Remote) OpenDir(ctx context.Context, name string) (store.Root, error) {
-	if name != "" && name[len(name)-1] != '/' {
-		name += "/"
-	}
 	sftp, err := gosftp.NewClient(ctx, r.ssh)
 	if err != nil {
 		return nil, err
 	}
-	if stat, err := sftp.Stat("."); err != nil {
+	prefix := name
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if stat, err := sftp.Stat(prefix + "."); err != nil {
 		return nil, fmt.Errorf("kv root %v: %w", name, err)
 	} else if !stat.IsDir() {
 		return nil, fmt.Errorf("kv root %v is not a directory", name)
 	}
-	return &remoteRoot{ssh: r.ssh, sftp: sftp, prefix: name}, nil
+	log.Printf("Open remote dir %q %q", r.Name(), prefix)
+	return &remoteRoot{ssh: r.ssh, sftp: sftp, prefix: prefix}, nil
 }
 
 func (r *Remote) OpenKV(ctx context.Context, name string, opts store.KVOptions) (store.KV, error) {
@@ -95,6 +99,10 @@ func (r *Remote) OpenHomeKV(ctx context.Context) (store.KV, error) {
 	return store.OpenRootKV(root, store.RemoteCachePath, store.KVOptions{Create: true})
 }
 
-func (r *Remote) NewSession() (*gossh.Session, error) {
-	return r.ssh.NewSession()
+func (r *Remote) NewCommand(name string, args ...string) (*Command, error) {
+	s, err := r.ssh.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	return &Command{Session: s, Path: name, Args: append([]string{name}, args...)}, nil
 }

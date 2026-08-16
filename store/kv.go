@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"log"
 	"os"
 	"strings"
 )
@@ -49,6 +50,7 @@ func OpenRootKV(root Root, name string, opts KVOptions) (*rootKV, error) {
 		}
 		root = kvRoot
 	}
+	log.Printf("Open KV %q", root.Name())
 	return &rootKV{root: root}, nil
 }
 

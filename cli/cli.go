@@ -94,13 +94,14 @@ func Main(ctx context.Context, args []string) (int, error) {
 								Name:  "address",
 								Value: "localhost",
 							},
-							&cli.StringArg{
+							&cli.StringArgs{
 								Name:  "command",
-								Value: "uname -a",
+								Min: 1,
+								Max: -1,
 							},
 						},
 						Action: func(ctx context.Context, c *cli.Command) error {
-							return ssh.Main(ctx, c.StringArg("address"), c.StringArg("command"))
+							return ssh.Main(ctx, c.StringArg("address"), c.StringArgs("command"))
 						},
 					},
 					{
