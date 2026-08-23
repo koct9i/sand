@@ -24,7 +24,7 @@ type Command struct {
 }
 
 var (
-	shellVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	shellVarName  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	shellRedirect = regexp.MustCompile(`^[0-9]*(>|>>|<|<<|<<-|<<<|<>|>\||>&|<&|&>|&>>)(|&[0-9]+|&-)$`)
 )
 

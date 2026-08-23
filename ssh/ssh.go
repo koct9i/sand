@@ -18,7 +18,7 @@ import (
 )
 
 type Remote struct {
-	ssh *gossh.Client
+	ssh    *gossh.Client
 	logger logr.Logger
 }
 
@@ -55,7 +55,7 @@ func NewRemote(ctx context.Context, address string) (*Remote, error) {
 	ssh := gossh.NewClient(sshConn, chans, reqs)
 
 	return &Remote{
-		ssh: ssh,
+		ssh:    ssh,
 		logger: logr.FromContextOrDiscard(ctx).WithValues("address", address),
 	}, nil
 }
@@ -84,8 +84,8 @@ func (r *Remote) OpenDir(ctx context.Context, name string) (store.Root, error) {
 	}
 	r.logger.Info("Open remote dir", "prefix", prefix)
 	return &remoteRoot{
-		ssh: r.ssh,
-		sftp: sftp,
+		ssh:    r.ssh,
+		sftp:   sftp,
 		logger: r.logger.WithValues("prefix", prefix),
 		prefix: prefix,
 	}, nil
@@ -114,8 +114,8 @@ func (r *Remote) NewCommand(name string, args ...string) (*Command, error) {
 	}
 	return &Command{
 		Session: s,
-		Logger: r.logger,
-		Path: name,
-		Args: append([]string{name}, args...),
+		Logger:  r.logger,
+		Path:    name,
+		Args:    append([]string{name}, args...),
 	}, nil
 }

@@ -123,7 +123,7 @@ func (c *rootKV) IterKeys(ext string) iter.Seq2[Key, os.FileInfo] {
 				if !strings.HasSuffix(entry.Name(), ext) {
 					continue
 				}
-				key, err := hex.DecodeString(bucket.Name()+strings.TrimSuffix(entry.Name(), ext))
+				key, err := hex.DecodeString(bucket.Name() + strings.TrimSuffix(entry.Name(), ext))
 				if err != nil {
 					continue
 				}

@@ -1,10 +1,11 @@
 module github.com/koct9i/sand
 
-go 1.26.6
+go 1.27.0
 
 require (
 	github.com/abrander/colorjson v0.0.0-20230613094054-36675efdd74f
 	github.com/adrg/xdg v0.5.3
+	github.com/dustin/go-humanize v1.0.1
 	github.com/go-logr/logr v1.4.4
 	github.com/google/uuid v1.6.0
 	github.com/onsi/ginkgo/v2 v2.32.1

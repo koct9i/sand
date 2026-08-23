@@ -1,3 +1,8 @@
+all: build lint
+
+build:
+	go build .
+
 lint:
 	go tool golangci-lint run
 

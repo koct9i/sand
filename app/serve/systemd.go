@@ -24,11 +24,11 @@ func ServeSystemd(ctx context.Context) error {
 func StartSystemd(ctx context.Context) error {
 	bin, _ := os.Executable()
 	unit := systemd.Unit{
-		Name: "sand",
-		Description: "Sand",
+		Name:         "sand",
+		Description:  "Sand",
 		ListenSocket: "/tmp/sand.sock",
-		Command: bin,
-		Args: []string{"app", "serve-systemd"},
+		Command:      bin,
+		Args:         []string{"app", "serve-systemd"},
 	}
 	startCmd, startArgs := unit.StartCommand()
 	cmd := exec.CommandContext(ctx, startCmd, startArgs...)
