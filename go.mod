@@ -1,6 +1,8 @@
 module github.com/koct9i/sand
 
-go 1.27.0
+go 1.27.1
+
+toolchain go1.27.4
 
 require (
 	github.com/abrander/colorjson v0.0.0-20230613094054-36675efdd74f

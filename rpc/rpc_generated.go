@@ -7,7 +7,7 @@ package rpc
 
 import (
 	context "context"
-	iter "iter"
+	strconv "strconv"
 )
 
 // AdminCaller implements Admin via a Caller.
@@ -16,23 +16,141 @@ type AdminCaller struct {
 }
 
 type GetpidRes struct {
-	Res0 int
+	Pid int
 }
 
-func (s *AdminCaller) Getpid() (res0 int, err error) {
+func (a *GetpidRes) List() []string {
+	return []string{
+		"Pid",
+	}
+}
+
+func (a *GetpidRes) Get(key string) (string, bool) {
+	switch key {
+	case "Pid":
+		return strconv.FormatInt(int64(a.Pid), 10), true
+	default:
+		return "", false
+	}
+}
+
+func (a *GetpidRes) Set(key, value string) error {
+	switch key {
+	case "Pid":
+		if val, err := strconv.ParseInt(value, 0, 0); err != nil {
+			return err
+		} else {
+			a.Pid = int(val)
+		}
+		return nil
+	default:
+		return UnknownMethod(key)
+	}
+}
+
+func (s *AdminCaller) Getpid() (pid int, err error) {
 	var res_ GetpidRes
 	err = s.Caller.Call(context.Background(), "Getpid", nil, &res_)
-	return res_.Res0, err
+	return res_.Pid, err
 }
 
 type HostnameRes struct {
-	Res0 string
+	Hostname string
 }
 
-func (s *AdminCaller) Hostname() (res0 string, err error) {
+func (a *HostnameRes) List() []string {
+	return []string{
+		"Hostname",
+	}
+}
+
+func (a *HostnameRes) Get(key string) (string, bool) {
+	switch key {
+	case "Hostname":
+		return a.Hostname, true
+	default:
+		return "", false
+	}
+}
+
+func (a *HostnameRes) Set(key, value string) error {
+	switch key {
+	case "Hostname":
+		a.Hostname = value
+		return nil
+	default:
+		return UnknownMethod(key)
+	}
+}
+
+func (s *AdminCaller) Hostname() (hostname string, err error) {
 	var res_ HostnameRes
 	err = s.Caller.Call(context.Background(), "Hostname", nil, &res_)
-	return res_.Res0, err
+	return res_.Hostname, err
+}
+
+type LoadavgRes struct {
+	Load1  float64
+	Load5  float64
+	Load15 float64
+}
+
+func (a *LoadavgRes) List() []string {
+	return []string{
+		"Load1",
+		"Load5",
+		"Load15",
+	}
+}
+
+func (a *LoadavgRes) Get(key string) (string, bool) {
+	switch key {
+	case "Load1":
+		return strconv.FormatFloat(float64(a.Load1), 'g', -1, 64), true
+	case "Load5":
+		return strconv.FormatFloat(float64(a.Load5), 'g', -1, 64), true
+	case "Load15":
+		return strconv.FormatFloat(float64(a.Load15), 'g', -1, 64), true
+	default:
+		return "", false
+	}
+}
+
+func (a *LoadavgRes) Set(key, value string) error {
+	switch key {
+	case "Load1":
+		if val, err := strconv.ParseFloat(value, 64); err != nil {
+			return err
+		} else {
+			a.Load1 = float64(val)
+		}
+		return nil
+	case "Load5":
+		if val, err := strconv.ParseFloat(value, 64); err != nil {
+			return err
+		} else {
+			a.Load5 = float64(val)
+		}
+		return nil
+	case "Load15":
+		if val, err := strconv.ParseFloat(value, 64); err != nil {
+			return err
+		} else {
+			a.Load15 = float64(val)
+		}
+		return nil
+	default:
+		return UnknownMethod(key)
+	}
+}
+
+func (s *AdminCaller) Loadavg() (load1 float64, load5 float64, load15 float64) {
+	var res_ LoadavgRes
+	err := s.Caller.Call(context.Background(), "Loadavg", nil, &res_)
+	if err != nil {
+		panic(err)
+	}
+	return res_.Load1, res_.Load5, res_.Load15
 }
 
 // AdminHandler implements Handler via a Admin.
@@ -43,7 +161,7 @@ type AdminHandler struct {
 func (h *AdminHandler) Getpid(ctx context.Context, stream Stream) error {
 	var res GetpidRes
 	var err_ error
-	res.Res0, err_ = h.Admin.Getpid()
+	res.Pid, err_ = h.Admin.Getpid()
 	if err_ != nil {
 		return err_
 	}
@@ -56,7 +174,7 @@ func (h *AdminHandler) Getpid(ctx context.Context, stream Stream) error {
 func (h *AdminHandler) Hostname(ctx context.Context, stream Stream) error {
 	var res HostnameRes
 	var err_ error
-	res.Res0, err_ = h.Admin.Hostname()
+	res.Hostname, err_ = h.Admin.Hostname()
 	if err_ != nil {
 		return err_
 	}
@@ -66,23 +184,31 @@ func (h *AdminHandler) Hostname(ctx context.Context, stream Stream) error {
 	return nil
 }
 
-func (h *AdminHandler) Methods() iter.Seq2[string, MethodFunc] {
-	return func(yield func(string, MethodFunc) bool) {
-		if !yield("Getpid", h.Getpid) {
-			return
-		}
-		if !yield("Hostname", h.Hostname) {
-			return
-		}
+func (h *AdminHandler) Loadavg(ctx context.Context, stream Stream) error {
+	var res LoadavgRes
+	res.Load1, res.Load5, res.Load15 = h.Admin.Loadavg()
+	if err := stream.Send(ctx, &res); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *AdminHandler) Methods() map[string]MethodFunc {
+	return map[string]MethodFunc{
+		"Getpid":   h.Getpid,
+		"Hostname": h.Hostname,
+		"Loadavg":  h.Loadavg,
 	}
 }
 
-func (h *AdminHandler) Serve(ctx context.Context, method string, stream Stream) error {
+func (h *AdminHandler) Handle(ctx context.Context, method string, stream Stream) error {
 	switch method {
 	case "Getpid":
 		return h.Getpid(ctx, stream)
 	case "Hostname":
 		return h.Hostname(ctx, stream)
+	case "Loadavg":
+		return h.Loadavg(ctx, stream)
 	default:
 		return UnknownMethod(method)
 	}
@@ -98,14 +224,21 @@ type ListArg struct {
 	Target string
 }
 
-func (a *ListArg) Get(key string) string {
+func (a *ListArg) List() []string {
+	return []string{
+		"Node",
+		"Target",
+	}
+}
+
+func (a *ListArg) Get(key string) (string, bool) {
 	switch key {
 	case "Node":
-		return a.Node
+		return a.Node, true
 	case "Target":
-		return a.Target
+		return a.Target, true
 	default:
-		return ""
+		return "", false
 	}
 }
 
@@ -124,6 +257,26 @@ func (a *ListArg) Set(key, value string) error {
 
 type ListRes struct {
 	Res0 []string
+}
+
+func (a *ListRes) List() []string {
+	return []string{
+		"Res0",
+	}
+}
+
+func (a *ListRes) Get(key string) (string, bool) {
+	switch key {
+	default:
+		return "", false
+	}
+}
+
+func (a *ListRes) Set(key, value string) error {
+	switch key {
+	default:
+		return UnknownMethod(key)
+	}
 }
 
 func (s *DiscoveryCaller) List(node string, target string) (res0 []string) {
@@ -157,15 +310,13 @@ func (h *DiscoveryHandler) List(ctx context.Context, stream Stream) error {
 	return nil
 }
 
-func (h *DiscoveryHandler) Methods() iter.Seq2[string, MethodFunc] {
-	return func(yield func(string, MethodFunc) bool) {
-		if !yield("List", h.List) {
-			return
-		}
+func (h *DiscoveryHandler) Methods() map[string]MethodFunc {
+	return map[string]MethodFunc{
+		"List": h.List,
 	}
 }
 
-func (h *DiscoveryHandler) Serve(ctx context.Context, method string, stream Stream) error {
+func (h *DiscoveryHandler) Handle(ctx context.Context, method string, stream Stream) error {
 	switch method {
 	case "List":
 		return h.List(ctx, stream)

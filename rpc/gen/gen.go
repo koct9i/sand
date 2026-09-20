@@ -83,32 +83,39 @@ type {{$method.Name}}Arg struct {
 	{{- end}}
 }
 
-func (a *{{$method.Name}}Arg) Get(key string) string {
+func (a *{{$method.Name}}Arg) List() []string {
+	return []string{
+		{{- range $param := $method.Arguments}}
+		{{- if $param.IsContext}}{{continue}}{{end}}
+		"{{$param.PublicName}}",
+		{{- end }}
+	}
+}
+
+func (a *{{$method.Name}}Arg) Get(key string) (string, bool) {
 	switch key {
 	{{- range $param := $method.Arguments}}
+	{{- if $param.IsContext}}{{continue}}{{end}}
+	{{- if $param.Get }}
 	case "{{$param.PublicName}}":
-		{{- if $param.Get }}
-		return {{ print "a." $param.PublicName | call $param.Get }}
-		{{- else }}
-		return a.{{$param.PublicName}}
-		{{- end }}
-	{{- end}}
+		return {{ print "a." $param.PublicName | call $param.Get }}, true
+	{{- end }}
+	{{- end }}
 	default:
-		return ""
+		return "", false
 	}
 }
 
 func (a *{{$method.Name}}Arg) Set(key, value string) error {
 	switch key {
 	{{- range $param := $method.Arguments}}
+	{{- if $param.IsContext}}{{continue}}{{end}}
+	{{- if $param.Set }}
 	case "{{$param.PublicName}}":
-		{{- if $param.Set }}
 		{{- print "a." $param.PublicName | call $param.Set "value" }}
-		{{- else }}
-		a.{{$param.PublicName}} = value
-		{{- end }}
 		return nil
-	{{- end}}
+	{{- end }}
+	{{- end }}
 	default:
 		return {{$.Imports.UnknownMethod|raw}}(key)
 	}
@@ -121,6 +128,44 @@ type {{$method.Name}}Res struct {
 	{{- if $param.IsError}}{{continue}}{{end}}
 	{{$param.PublicName}} {{$param.Type|raw}}
 	{{- end}}
+}
+
+func (a *{{$method.Name}}Res) List() []string {
+	return []string{
+		{{- range $param := $method.Results}}
+		{{- if $param.IsError}}{{continue}}{{end}}
+		"{{$param.PublicName}}",
+		{{- end }}
+	}
+}
+
+func (a *{{$method.Name}}Res) Get(key string) (string, bool) {
+	switch key {
+	{{- range $param := $method.Results}}
+	{{- if $param.IsError}}{{continue}}{{end}}
+	{{- if $param.Get }}
+	case "{{$param.PublicName}}":
+		return {{ print "a." $param.PublicName | call $param.Get }}, true
+	{{- end }}
+	{{- end }}
+	default:
+		return "", false
+	}
+}
+
+func (a *{{$method.Name}}Res) Set(key, value string) error {
+	switch key {
+	{{- range $param := $method.Results}}
+	{{- if $param.IsError}}{{continue}}{{end}}
+	{{- if $param.Set }}
+	case "{{$param.PublicName}}":
+		{{- print "a." $param.PublicName | call $param.Set "value" }}
+		return nil
+	{{- end }}
+	{{- end }}
+	default:
+		return {{$.Imports.UnknownMethod|raw}}(key)
+	}
 }
 {{- end}}
 
@@ -227,17 +272,15 @@ func (h *{{$.Name}}Handler) {{$method.Name}} (ctx {{$.Imports.Context|raw}}, str
 }
 {{- end}}
 
-func (h *{{$.Name}}Handler) Methods() {{.Imports.Seq2|raw}}[string, {{.Imports.MethodFunc|raw}}] {
-	return func(yield func(string, {{.Imports.MethodFunc|raw}}) bool) {
+func (h *{{$.Name}}Handler) Methods() map[string]{{.Imports.MethodFunc|raw}} {
+	return map[string]{{.Imports.MethodFunc|raw}}{
 		{{- range $method := .Methods}}
-		if !yield("{{$method.Name}}", h.{{$method.Name}}) {
-			return
-		}
+		"{{$method.Name}}": h.{{$method.Name}},
 		{{- end}}
 	}
 }
 
-func (h *{{$.Name}}Handler) Serve(ctx {{.Imports.Context|raw}}, method string, stream {{.Imports.Stream|raw}}) error {
+func (h *{{$.Name}}Handler) Handle(ctx {{.Imports.Context|raw}}, method string, stream {{.Imports.Stream|raw}}) error {
 	switch method {
 	{{- range $method := .Methods}}
 	case "{{$method.Name}}":
@@ -249,6 +292,58 @@ func (h *{{$.Name}}Handler) Serve(ctx {{.Imports.Context|raw}}, method string, s
 }
 
 `
+
+func (g *rpcGenerator) initParam(p *Param, kind string, index int) {
+	if p.Name == "" {
+		p.Name = fmt.Sprintf("%s%v", kind, index)
+	}
+	if index != 0 {
+		p.Comma = ", "
+	}
+	p.PublicName = namer.IC(p.Name)
+	bits := map[string]int{"int64": 64, "int32": 32, "int16": 16, "uint64": 64, "uint32": 32, "uint16": 16, "byte": 8, "float32": 32, "float64": 64}
+	switch t := p.Type.Name.Name; t {
+	case "int", "int16", "int32", "int64":
+		g.importsTracker.AddSymbol(types.ParseFullyQualifiedName("strconv.FormatInt"))
+		p.Get = func(arg string) string {
+			return fmt.Sprintf("strconv.FormatInt(int64(%s), 10)", arg)
+		}
+		p.Set = func(val, arg string) string {
+			return fmt.Sprintf(`if val, err := strconv.ParseInt(%s, 0, %d); err != nil { return err } else { %s = %s(val) }`, val, bits[t], arg, t)
+		}
+	case "uint", "uint16", "uint32", "uint64", "byte":
+		g.importsTracker.AddSymbol(types.ParseFullyQualifiedName("strconv.FormatUint"))
+		p.Get = func(arg string) string {
+			return fmt.Sprintf("strconv.FormatInt(uint64(%s), 10)", arg)
+		}
+		p.Set = func(val, arg string) string {
+			return fmt.Sprintf(`if val, err := strconv.ParseUint(%s, 0, %d); err != nil { return err } else { %s = %s(val) }`, val, bits[t], arg, t)
+		}
+	case "float32", "float64":
+		g.importsTracker.AddSymbol(types.ParseFullyQualifiedName("strconv.FormatFloat"))
+		p.Get = func(arg string) string {
+			return fmt.Sprintf("strconv.FormatFloat(float64(%s), 'g', -1, %d)", arg, bits[t])
+		}
+		p.Set = func(val, arg string) string {
+			return fmt.Sprintf(`if val, err := strconv.ParseFloat(%s, %d); err != nil { return err } else { %s = %s(val) }`, val, bits[t], arg, t)
+		}
+	case "bool":
+		g.importsTracker.AddSymbol(types.ParseFullyQualifiedName("strconv.FormatBool"))
+		p.Get = func(arg string) string {
+			return fmt.Sprintf("strconv.FormatBool(%s)", arg)
+		}
+		p.Set = func(val, arg string) string {
+			return fmt.Sprintf(`if val, err := strconv.ParseBool(%s); err != nil { return err } else { %s = val }`, val, arg)
+		}
+	case "string":
+		p.Get = func(arg string) string {
+			return arg
+		}
+		p.Set = func(val, arg string) string {
+			return fmt.Sprintf(`%s = %s`, arg, val)
+		}
+	}
+}
 
 func (g *rpcGenerator) GenerateType(c *generator.Context, t *types.Type, w io.Writer) error {
 	sw := generator.NewSnippetWriter(w, c, "{{", "}}")
@@ -272,16 +367,11 @@ func (g *rpcGenerator) GenerateType(c *generator.Context, t *types.Type, w io.Wr
 				Name: arg.Name,
 				Type: arg.Type,
 			}
-			if index != 0 {
-				p.Comma = ", "
-			}
 			if index == 0 && isContextType(p.Type) {
 				if p.Name == "" {
 					p.Name = "ctx"
 				}
 				p.IsContext = true
-				method.Context = p
-				method.WithContext = true
 			}
 			if index == len(msign.Parameters)-1 && msign.Variadic {
 				if p.Name == "" {
@@ -289,21 +379,11 @@ func (g *rpcGenerator) GenerateType(c *generator.Context, t *types.Type, w io.Wr
 				}
 				p.IsVariadic = true
 			}
-			if p.Name == "" {
-				p.Name = fmt.Sprintf("arg%v", index)
-			}
-			p.PublicName = namer.IC(p.Name)
-			switch p.Type.Name.Name {
-			case "int":
-				g.importsTracker.AddSymbol(types.ParseFullyQualifiedName("strconv.Itoa"))
-				p.Get = func(arg string) string { return fmt.Sprintf("strconv.Itoa(%s)", arg) }
-				p.Set = func(val, arg string) string { return fmt.Sprintf(`if val, err := strconv.ParseInt(%s, 0, 0); err != nil { return err } else { %s = int(val) }`, val, arg) }
-			case "bool":
-				g.importsTracker.AddSymbol(types.ParseFullyQualifiedName("strconv.FormatBool"))
-				p.Get = func(arg string) string { return fmt.Sprintf("strconv.FormatBool(%s)", arg) }
-				p.Set = func(val, arg string) string { return fmt.Sprintf(`if val, err := strconv.ParseBool(%s); err != nil { return err } else { %s = val }`, val, arg) }
-			}
-			if !p.IsContext {
+			g.initParam(&p, "arg", index)
+			if p.IsContext {
+				method.Context = p
+				method.WithContext = true
+			} else {
 				method.WithArguments = true
 			}
 			method.Arguments = append(method.Arguments, p)
@@ -314,22 +394,17 @@ func (g *rpcGenerator) GenerateType(c *generator.Context, t *types.Type, w io.Wr
 				Name: result.Name,
 				Type: result.Type,
 			}
-			if index != 0 {
-				p.Comma = ", "
-			}
 			if index == len(msign.Results)-1 && isErrorType(result.Type) {
 				if p.Name == "" {
 					p.Name = "err"
 				}
 				p.IsError = true
+			}
+			g.initParam(&p, "res", index)
+			if p.IsError {
 				method.Error = p
 				method.WithError = true
-			}
-			if p.Name == "" {
-				p.Name = fmt.Sprintf("res%v", index)
-			}
-			p.PublicName = namer.IC(p.Name)
-			if !p.IsError {
+			} else {
 				method.WithResults = true
 			}
 			method.Results = append(method.Results, p)
@@ -340,7 +415,6 @@ func (g *rpcGenerator) GenerateType(c *generator.Context, t *types.Type, w io.Wr
 
 	importedTypes := []string{
 		"context.Context",
-		"iter.Seq2",
 		"github.com/koct9i/sand/rpc.Caller",
 		"github.com/koct9i/sand/rpc.Stream",
 		"github.com/koct9i/sand/rpc.MethodFunc",

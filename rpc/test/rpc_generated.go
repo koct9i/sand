@@ -7,7 +7,6 @@ package test
 
 import (
 	context "context"
-	iter "iter"
 	strconv "strconv"
 
 	rpc "github.com/koct9i/sand/rpc"
@@ -33,12 +32,18 @@ type WithParamArg struct {
 	Arg int
 }
 
-func (a *WithParamArg) Get(key string) string {
+func (a *WithParamArg) List() []string {
+	return []string{
+		"Arg",
+	}
+}
+
+func (a *WithParamArg) Get(key string) (string, bool) {
 	switch key {
 	case "Arg":
-		return strconv.Itoa(a.Arg)
+		return strconv.FormatInt(int64(a.Arg), 10), true
 	default:
-		return ""
+		return "", false
 	}
 }
 
@@ -68,6 +73,35 @@ func (s *TestCaller) WithParam(arg int) {
 
 type WithResultRes struct {
 	Res0 int
+}
+
+func (a *WithResultRes) List() []string {
+	return []string{
+		"Res0",
+	}
+}
+
+func (a *WithResultRes) Get(key string) (string, bool) {
+	switch key {
+	case "Res0":
+		return strconv.FormatInt(int64(a.Res0), 10), true
+	default:
+		return "", false
+	}
+}
+
+func (a *WithResultRes) Set(key, value string) error {
+	switch key {
+	case "Res0":
+		if val, err := strconv.ParseInt(value, 0, 0); err != nil {
+			return err
+		} else {
+			a.Res0 = int(val)
+		}
+		return nil
+	default:
+		return rpc.UnknownMethod(key)
+	}
 }
 
 func (s *TestCaller) WithResult() (res0 int) {
@@ -116,24 +150,16 @@ func (h *TestHandler) WithResult(ctx context.Context, stream rpc.Stream) error {
 	return nil
 }
 
-func (h *TestHandler) Methods() iter.Seq2[string, rpc.MethodFunc] {
-	return func(yield func(string, rpc.MethodFunc) bool) {
-		if !yield("WithError", h.WithError) {
-			return
-		}
-		if !yield("WithNothing", h.WithNothing) {
-			return
-		}
-		if !yield("WithParam", h.WithParam) {
-			return
-		}
-		if !yield("WithResult", h.WithResult) {
-			return
-		}
+func (h *TestHandler) Methods() map[string]rpc.MethodFunc {
+	return map[string]rpc.MethodFunc{
+		"WithError":   h.WithError,
+		"WithNothing": h.WithNothing,
+		"WithParam":   h.WithParam,
+		"WithResult":  h.WithResult,
 	}
 }
 
-func (h *TestHandler) Serve(ctx context.Context, method string, stream rpc.Stream) error {
+func (h *TestHandler) Handle(ctx context.Context, method string, stream rpc.Stream) error {
 	switch method {
 	case "WithError":
 		return h.WithError(ctx, stream)

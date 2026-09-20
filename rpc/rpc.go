@@ -3,8 +3,13 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"iter"
 )
+
+type Message interface {
+	List() []string
+	Get(key string) (string, bool)
+	Set(key, value string) error
+}
 
 type Stream interface {
 	Send(ctx context.Context, msg any) error
@@ -15,8 +20,8 @@ type Stream interface {
 type MethodFunc func(ctx context.Context, stream Stream) error
 
 type Handler interface {
-	Methods() iter.Seq2[string, MethodFunc]
-	Serve(ctx context.Context, method string, stream Stream) error
+	Methods() map[string]MethodFunc
+	Handle(ctx context.Context, method string, stream Stream) error
 }
 
 type Caller interface {

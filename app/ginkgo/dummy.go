@@ -53,4 +53,14 @@ var _ = Context("Dummy", Label("dummy"), func() {
 		}, SamplingConfig{N: 100, Duration: time.Second})
 		AddReportEntry(exp.Name, exp)
 	})
+
+
+	It("Measure rps", Label("rps"), func() {
+		experiment := NewExperiment("rps")
+		dice := NewSeededRand()
+		experiment.SampleDuration("dice", func(idx int) {
+			time.Sleep(time.Millisecond*time.Duration(dice.Intn(6)+1))
+		}, SamplingConfig{Duration: time.Second*5})
+		AddReportEntry(experiment.Name, experiment)
+	})
 })

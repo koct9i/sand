@@ -8,8 +8,9 @@ import (
 
 // +sand:rpc
 type Admin interface {
-	Hostname() (string, error)
-	Getpid() (int, error)
+	Hostname() (hostname string, err error)
+	Getpid() (pid int, err error)
+	Loadavg() (load1, load5, load15 float64)
 }
 
 type localAdmin struct {

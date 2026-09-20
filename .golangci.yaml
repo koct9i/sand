@@ -100,7 +100,7 @@ linters:
     - makezero # finds slice declarations with non-zero initial length
     - musttag # enforces field tags in (un)marshaled structs
     - noctx # finds sending http request without context.Context
-    - protogetter # reports direct reads from proto message fields when getters should be used
+    - protogetter # reports direct reads from proto message fields when getters should be used. NOTE: https://go.dev/blog/protobuf-opaque
     - reassign # checks that package variables are not reassigned
     - rowserrcheck # checks whether Err of rows is checked successfully
     - spancheck # checks for mistakes with OpenTelemetry/Census spans
@@ -132,7 +132,7 @@ linters:
     - promlinter # checks Prometheus metrics naming via promlint
     # - revive # fast, configurable, extensible, flexible, and beautiful linter for Go, drop-in replacement of golint
     - sloglint # ensure consistent code style when using log/slog
-    - tagliatelle # checks the struct tags
+    - tagliatelle # checks the struct tags https://github.com/ldez/tagliatelle
     - testableexamples # checks if examples are testable (have an expected output)
     - wastedassign # finds wasted assignment statements
     ## tests
@@ -156,6 +156,7 @@ linters:
     - iotamixing  # checks if iotas are being used in const blocks with other non-iota declarations.
     # - unqueryvet  # detects SELECT * in SQL queries and SQL builders, preventing performance issues and encouraging explicit column selection
 
+  # https://golangci-lint.run/docs/linters/configuration/
   settings:
     cyclop:
       # The maximal code complexity to report.
@@ -185,8 +186,8 @@ linters:
       # disable-default-exclusions: true # To disable the errcheck built-in exclude list.
       # List of functions to exclude from checking, where each entry is a single function to exclude.
       # See https://github.com/kisielk/errcheck#excluding-functions for details.
-      exclude-functions:
-        - "(io.ReadCloser).Close"
+      # exclude-functions:
+      #   - "(io.ReadCloser).Close"
     forbidigo:
       # Instead of matching the literal source code,
       # use type information to replace expressions with strings that contain the package name
@@ -260,6 +261,13 @@ linters:
       order:
         - json
         - yaml
+    # https://golangci-lint.run/docs/linters/configuration/#tagliatelle
+    tagliatelle:
+      case:
+        # Uses the struct field name to check the name of the struct tag.
+        use-field-name: true
+        rules:
+          json: snake
     lll:
       # Max line length, lines longer will be reported.
       # '\t' is counted as 1 character by default, and can be changed with the tab-width option.
@@ -267,9 +275,15 @@ linters:
       line-length: 180
     interfacebloat:
       max: 16
+
+  # https://golangci-lint.run/docs/linters/false-positives/
   exclusions:
     paths: []
     rules:
+      # https://github.com/kisielk/errcheck/issues/101
+      - source: "^\\s*defer\\s+"
+        linters:
+          - errcheck
       - path: '_test\.go'
         linters:
           # - dupl
