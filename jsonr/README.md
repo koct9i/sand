@@ -1,0 +1,100 @@
+# jsonr
+
+A relaxed JSON encoder and decoder built on Go 1.27's `encoding/json/v2` and
+`encoding/json/jsontext`. No external dependencies or experiment flags are needed.
+
+Decoding accepts standard JSON plus:
+
+- `//`, `/* ... */`, and `#` comments between tokens.
+- Optional commas between object members and array elements, and trailing commas.
+- Single-quoted strings, with JSON escapes and the additional `\'` escape.
+- Bare strings matching `[A-Za-z_$][A-Za-z0-9_$]*`, as keys or values.
+  `true`, `false`, and `null` retain their JSON meanings and require quotes
+  when used as object keys or string values.
+
+Encoding omits commas between members and elements, and omits quotes from bare
+strings in both keys and values. Strings with more than 256 bytes of encoded
+content remain quoted, as do reserved words and strings that are not identifiers.
+Compact output uses spaces as separators; indented output keeps its whitespace.
+Comments and original formatting are discarded. This is a defined subset of
+relaxed syntax, not a full JSON5 implementation: numbers follow standard JSON
+rules, and colons remain required. For example, `{a:1 b:[2 3]}` decodes like
+`{"a":1,"b":[2,3]}`.
+
+```go
+package main
+
+import (
+    "fmt"
+    "encoding/json/jsontext"
+    "encoding/json/v2"
+
+    "github.com/koct9i/junk/jsonr"
+)
+
+func main() {
+    var config struct {
+        Name  string `json:"name"`
+        Ports []int  `json:"ports"`
+    }
+    err := jsonr.Unmarshal([]byte(`{
+        // Local service
+        name: 'example',
+        ports: [8080, 8081,],
+    }`), &config)
+    if err != nil {
+        panic(err)
+    }
+    b, err := jsonr.Marshal(config,
+        json.Deterministic(true), jsontext.WithIndent("  "))
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(string(b))
+}
+```
+
+`Marshal` produces one value without a final newline. `Unmarshal` requires exactly
+one value and allows surrounding comments and whitespace.
+
+`NewRelaxedWriter(writer)` exposes the encoding conversion as an `io.Writer`.
+Pass it to `json.MarshalWrite`, or write standard JSON directly. It omits commas
+and unquotes short bare strings, including when tokens span multiple writes.
+It buffers at most 256 bytes of string content before keeping a string quoted.
+Complete JSON values need no flush. Output errors are retained for subsequent
+writes. The writer expects valid JSON and does not validate syntax.
+
+`NewRelaxedReader(reader)` exposes the conversion as an `io.Reader`. Before
+reading, call `Wrap('[')` to enclose a list of values in an array, or `Wrap('{')`
+to enclose object members in an object. For example, `1 2 3,` becomes `[1,2,3]`,
+and `name:'example' ports:[8080 8081]` becomes an object. Empty input produces an
+empty container. Decode the result with `json.UnmarshalRead`.
+
+`GetLastToken` inspects incomplete input for completion. It returns the token at
+the cursor, its completion position as a JSON Pointer, and the closing quotes and
+containers still open. For example, `{a:[0` returns `("0", "/a/0", "]}")`.
+Trailing whitespace clears the token and advances the array position to `/a/1`.
+
+`StructCompletion(Config{})` creates a field-name completion handler. It uses
+`json` tags for names and `help` tags for descriptions, skips ignored and
+unexported fields, and follows pointers into nested structs, arrays, slices, and
+map values. Results map complete relaxed JSON field names to descriptions;
+quoted names stay quoted, and no colon is appended. For example, a field tagged
+`json:"name" help:"Service name"` produces `map["name"] = "Service name"`.
+Register the handler at `Completor.Handlers[""]` to cover the whole document.
+Handlers at more specific JSON Pointers override it for their subtree.
+
+Options from both standard packages work directly, including indentation,
+deterministic map ordering, custom marshalers/unmarshalers, unknown-member
+rejection, and duplicate-name handling. Go struct tags and JSON customization
+methods retain their v2 behavior. Custom methods see and produce standard JSON;
+the relaxed syntax is handled at the outer boundary.
+
+Duplicate names and invalid UTF-8 are rejected by default, as in v2. The reader
+only converts relaxed syntax; `jsontext` validates the normalized JSON. Decoder
+error byte offsets are translated using the input and output byte counts at the
+previous token's start, accounting for inserted commas and quotes and removed
+comments before that token.
+
+Run `go test ./...` to check the package and examples. Fuzz targets cover strict
+JSON compatibility, optional commas, and relaxed round trips.
