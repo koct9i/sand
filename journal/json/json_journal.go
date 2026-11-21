@@ -1,14 +1,23 @@
-package journal
+package json
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/koct9i/sand/journal"
 )
 
 // ErrSnapshotsUnsupported marks the segment storage missing from this prototype.
 var ErrSnapshotsUnsupported = errors.New("journal: snapshot segments are not implemented")
+
+// State adds the live object count tracked by the JSON record stream to the
+// core journal's storage metadata.
+type State struct {
+	journal.State
+	CurrentObjects uint64 `json:"current_objects"`
+}
 
 // JSONJournal writes one JSON record per line to a single segment. The caller
 // owns the writer and is responsible for flushing, syncing, and closing it.
@@ -19,8 +28,6 @@ type JSONJournal struct {
 	state  State
 	err    error
 }
-
-var _ Journal = (*JSONJournal)(nil)
 
 // NewJSONJournal starts a segment with a state record. It does not replay an
 // existing stream; state must describe the objects before subsequent appends.

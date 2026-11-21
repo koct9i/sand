@@ -26,4 +26,8 @@ func (a *localAdmin) Getpid() (int, error) {
 	return os.Getpid(), nil
 }
 
+func (a *localAdmin) Loadavg() (load1, load5, load15 float64) {
+	return 0, 0, 0
+}
+
 var LocalAdmin Admin = &localAdmin{}

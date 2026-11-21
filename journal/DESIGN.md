@@ -24,6 +24,10 @@ Recovery is intended to restore a completed snapshot and replay subsequent
 changes. Coordination between object updates and snapshot capture, recovery,
 and segment reclamation remain to be implemented.
 
+The record-oriented JSON prototype in `journal/json` owns its record types and
+adds a live object count to the core storage state. Its streaming API is separate
+from the byte-oriented `journal.Journal` storage interface.
+
 The JSON prototype writes one record per line, with a `header` and a `data`
 payload. Record types are numeric: change `0`, snapshot `1`, create `2`, delete
 `3`, and journal state `4`. For example, an application could write:

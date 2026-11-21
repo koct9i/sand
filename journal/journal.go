@@ -178,13 +178,12 @@ type State struct {
 
 	Entries         uint64 `json:"entries"`
 	SnapshotEpoch   Epoch  `json:"snapshot_epoch"`
-	SnapshotOffset  Offset `json:"snapshot_offset"`
+	SnapshotOffset  uint64 `json:"snapshot_offset"`
 	SnapshotObjects uint64 `json:"snapshot_objects"`
 }
 
 type Entry interface {
 	GetMethod() string
-	Is
 }
 
 type Object interface {

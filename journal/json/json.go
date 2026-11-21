@@ -4,33 +4,55 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-
-	"github.com/koct9i/sand/journal"
 )
 
-type record struct {
-	Type  journal.RecordType `json:"type"`
-	Name  string             `json:"name,omitempty"`
-	Data  json.RawMessage    `json:"data,omitempty"`
-	State *journal.State     `json:"state,omitempty"`
+type RecordType uint8
+
+const (
+	RecordTypeChange RecordType = iota
+	RecordTypeSnapshot
+	RecordTypeCreate
+	RecordTypeDelete
+	RecordTypeJournalState
+)
+
+type RecordHeader struct {
+	Type RecordType
 }
 
-var _ journal.Record = (*record)(nil)
-
-func (r *record) GetType() journal.RecordType {
-	return r.Type
+type Record interface {
+	GetHeader() RecordHeader
+	GetType() RecordType
+	GetData(any) error
 }
 
-func (r *record) GetName() string {
-	return r.Name
+type JSONRecord struct {
+	Header RecordHeader    `json:"header"`
+	Data   json.RawMessage `json:"data"`
 }
 
-func (r *record) GetData(data any) error {
+var _ Record = (*JSONRecord)(nil)
+
+// NewJSONRecord captures data as JSON so subsequent changes to data do not
+// affect the record.
+func NewJSONRecord(header RecordHeader, data any) (*JSONRecord, error) {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("journal: encode record data: %w", err)
+	}
+	return &JSONRecord{Header: header, Data: payload}, nil
+}
+
+func (r *JSONRecord) GetHeader() RecordHeader {
+	return r.Header
+}
+
+func (r *JSONRecord) GetType() RecordType {
+	return r.Header.Type
+}
+
+func (r *JSONRecord) GetData(data any) error {
 	return json.Unmarshal(r.Data, data)
-}
-
-func (r *record) GetState() *journal.State {
-	return r.State
 }
 
 // JSONReader reads a stream of JSON records. It does not apply records to objects
