@@ -67,13 +67,21 @@ writes. The writer expects valid JSON and does not validate syntax.
 `NewRelaxedReader(reader)` exposes the conversion as an `io.Reader`. Before
 reading, call `Wrap('[')` to enclose a list of values in an array, or `Wrap('{')`
 to enclose object members in an object. For example, `1 2 3,` becomes `[1,2,3]`,
-and `name:'example' ports:[8080 8081]` becomes an object. Empty input produces an
-empty container. Decode the result with `json.UnmarshalRead`.
+and `name:'example' ports:[8080 8081]` becomes an object. Object wrapping is skipped
+when the first token after whitespace and comments is already `{`; array
+wrapping always adds an outer array. Empty input produces an empty container.
+Whitespace and comments between tokens are discarded. Decode the result with
+`json.UnmarshalRead`.
 
-`GetLastToken` inspects incomplete input for completion. It returns the token at
-the cursor, its completion position as a JSON Pointer, and the closing quotes and
-containers still open. For example, `{a:[0` returns `("0", "/a/0", "]}")`.
-Trailing whitespace clears the token and advances the array position to `/a/1`.
+`GetLastToken(reader)` inspects incomplete input from an `io.Reader` for
+completion. It returns the token at the cursor, its completion position as a JSON
+Pointer, the closing quotes and containers still open, the token's byte offset
+in the original input, including any opening quote, and whether the cursor is
+completing a value. For example, `{a:[0` returns `("0", "/a/0", "]}", 4, true)`;
+`{na` returns `("na", "/", "}", 1, false)` because it completes an object name.
+Trailing whitespace clears the token, advances the array position to `/a/1`, and
+sets the offset to the input length. An offset of `-1` indicates that input ends
+inside a line or block comment, where completion should be suppressed.
 
 `StructCompletion(Config{})` creates a field-name completion handler. It uses
 `json` tags for names and `help` tags for descriptions, skips ignored and
@@ -81,8 +89,19 @@ unexported fields, and follows pointers into nested structs, arrays, slices, and
 map values. Results map complete relaxed JSON field names to descriptions;
 quoted names stay quoted, and no colon is appended. For example, a field tagged
 `json:"name" help:"Service name"` produces `map["name"] = "Service name"`.
-Register the handler at `Completor.Handlers[""]` to cover the whole document.
-Handlers at more specific JSON Pointers override it for their subtree.
+Call the handler with the pointer and token returned by `GetLastToken`.
+
+`ValueCompletion(Config{})` creates a handler for value positions. It follows the
+full JSON Pointer, includes it in each suggestion's description, and suggests
+`{` for structs and maps, `[` for arrays and
+slices, `true` and `false` for booleans, and `0` for numbers. Strings always offer
+`_STRING_` and a zero-length replacement for any prefix, preventing shell fallback
+to unrelated completions.
+Pointers, maps, slices, and interfaces also offer `null`; empty interfaces offer
+every JSON value kind. Byte slices use `""` for their base64 string representation,
+while nonempty byte arrays and text-unmarshaled types offer an opening `"`.
+Other suggestions match the current token prefix. Select `ValueCompletion` when
+the last result from `GetLastToken` is true, and `StructCompletion` for object names.
 
 Options from both standard packages work directly, including indentation,
 deterministic map ordering, custom marshalers/unmarshalers, unknown-member
@@ -94,7 +113,7 @@ Duplicate names and invalid UTF-8 are rejected by default, as in v2. The reader
 only converts relaxed syntax; `jsontext` validates the normalized JSON. Decoder
 error byte offsets are translated using the input and output byte counts at the
 previous token's start, accounting for inserted commas and quotes and removed
-comments before that token.
+comments and whitespace before that token.
 
 Run `go test ./...` to check the package and examples. Fuzz targets cover strict
 JSON compatibility, optional commas, and relaxed round trips.

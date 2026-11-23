@@ -149,6 +149,7 @@ func (w *RelaxedWriter) appendRelaxed(out, p []byte) []byte {
 }
 
 // RelaxedReader transforms JSON tokens without syntax validation.
+// Whitespace and comments between tokens are discarded.
 type RelaxedReader struct {
 	in   *bufio.Reader
 	buf  []byte
@@ -158,8 +159,11 @@ type RelaxedReader struct {
 	wrap byte
 	// Shift from input to output at the start of last token.
 	lastShift int64
+	lastStart int64 // Source byte offset at the start of the last token.
+	triviaEnd int64 // Source byte offset after the last whitespace or comment.
 	inOffset  int64
 	outOffset int64
+	inComment bool
 }
 
 func NewRelaxedReader(in io.Reader) *RelaxedReader {
@@ -170,9 +174,12 @@ func (r *RelaxedReader) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	if len(r.buf) == 0 && r.err == nil {
+	for len(r.buf) == 0 && r.err == nil {
 		r.err = r.fill()
 		if r.err == io.EOF {
+			if r.outOffset == 0 && r.wrap != 0 {
+				r.emit(r.wrap)
+			}
 			switch r.wrap {
 			case '[':
 				r.emit(']')
@@ -193,7 +200,12 @@ func (r *RelaxedReader) SourceError(err error) error {
 	switch e := err.(type) {
 	case *jsontext.SyntacticError:
 		copy := *e
-		copy.ByteOffset -= r.lastShift
+		if r.err == io.EOF && copy.ByteOffset == r.outOffset {
+			// EOF follows any discarded trailing trivia.
+			copy.ByteOffset = r.inOffset
+		} else {
+			copy.ByteOffset -= r.lastShift
+		}
 		return &copy
 	case *json.SemanticError:
 		copy := *e
@@ -206,6 +218,8 @@ func (r *RelaxedReader) SourceError(err error) error {
 }
 
 // Wrap encloses the input in an array ('[') or object ('{').
+// Object wrapping is skipped when the first token, after whitespace and
+// comments, is already '{'. Array wrapping always adds an outer array.
 // Call it before reading; zero leaves the input unwrapped.
 func (r *RelaxedReader) Wrap(wrap byte) {
 	r.wrap = wrap
@@ -233,12 +247,12 @@ func (r *RelaxedReader) readByte() (byte, error) {
 }
 
 func (r *RelaxedReader) fill() error {
-	if r.outOffset == 0 && r.wrap != 0 {
-		r.emit(r.wrap)
-		return nil
-	}
 	if ok, err := r.trivia(); ok || err != nil {
 		return err
+	}
+	if r.outOffset == 0 && r.wrap == '[' {
+		r.emit('[')
+		return nil
 	}
 	c, err := r.peek()
 	if err != nil {
@@ -251,20 +265,27 @@ func (r *RelaxedReader) fill() error {
 		return nil
 	}
 	startShift := r.outOffset - r.inOffset
+	r.lastStart = r.inOffset
 	c, err = r.readByte()
 	if err != nil {
 		return err
 	}
 	r.lastShift = startShift
 	switch c {
-	case '{', '[', '}', ']', ':':
+	case '{':
+		if r.outOffset == 0 && r.wrap == '{' {
+			r.wrap = 0
+		}
+		r.emit(c)
+	case '[', '}', ']', ':':
 		r.emit(c)
 	case ',':
 		err = r.comma()
 	case '"', '\'':
 		err = r.string(c)
 	default:
-		r.buf = append(r.buf, c)
+		// Leave room for an implicit object opener and the opening quote.
+		r.buf = append(r.buf, 0, 0, c)
 		for {
 			var next byte
 			next, err = r.peek()
@@ -274,14 +295,14 @@ func (r *RelaxedReader) fill() error {
 			r.readByte() // already peeked
 			r.buf = append(r.buf, next)
 		}
-		n := len(r.buf)
-		if isBareString(r.buf) {
-			r.buf = append(r.buf, 0, '"')
-			copy(r.buf[1:], r.buf[:n])
-			r.buf[0] = '"'
-			r.outOffset += int64(n) + 2
+		b := r.buf[2:]
+		r.buf = r.buf[:0]
+		if isBareString(b) {
+			r.startString()
+			r.emit(b...)
+			r.emit('"')
 		} else {
-			r.outOffset += int64(n)
+			r.emit(b...)
 		}
 	}
 	r.last = c
@@ -298,7 +319,7 @@ func (r *RelaxedReader) needsComma(next byte) bool {
 }
 
 func (r *RelaxedReader) comma() error {
-	// Keep the comma's width and any intervening trivia. The preceding token
+	// Keep the comma's width. The preceding token
 	// keeps empty or repeated commas from disappearing during normalization.
 	r.emit(',')
 	for {
@@ -324,8 +345,16 @@ func (r *RelaxedReader) comma() error {
 	return err
 }
 
-func (r *RelaxedReader) string(quote byte) error {
+func (r *RelaxedReader) startString() {
+	if r.outOffset == 0 && r.wrap == '{' {
+		r.emit('{')
+		r.lastShift++
+	}
 	r.emit('"')
+}
+
+func (r *RelaxedReader) string(quote byte) error {
+	r.startString()
 	for {
 		c, err := r.readByte()
 		if err != nil {
@@ -355,72 +384,75 @@ func (r *RelaxedReader) string(quote byte) error {
 	}
 }
 
-// trivia consumes one whitespace byte or comment. Replacing each comment with
-// whitespace prevents comments from silently joining two tokens, e.g. 1/*c*/2.
+// trivia discards one whitespace byte or comment. needsComma keeps adjacent
+// values separate, including when a comment separates them, e.g. 1/*c*/2.
 func (r *RelaxedReader) trivia() (bool, error) {
 	c, err := r.peek()
 	if err != nil {
 		return false, err
 	}
-	if isSpace(c) {
+	switch {
+	case isSpace(c):
 		r.readByte()
-		r.emit(c)
-		return true, nil
-	}
-	if c == '#' {
+	case c == '#':
 		r.readByte()
-		err := r.lineComment()
-		r.emit(' ')
-		return true, err
-	}
-	if c != '/' {
-		return false, nil
-	}
-	prefix, err := r.in.Peek(2)
-	if err != nil {
-		if err == io.EOF {
-			return false, nil // let jsontext reject the lone slash
+		err = r.lineComment()
+	case c == '/':
+		prefix, peekErr := r.in.Peek(2)
+		if peekErr != nil {
+			if peekErr == io.EOF {
+				return false, nil // let jsontext reject the lone slash
+			}
+			return false, peekErr
 		}
-		return false, err
-	}
-	switch prefix[1] {
-	case '/':
-		r.in.Discard(2)
-		r.inOffset += 2 // already peeked
-		err := r.lineComment()
-		r.emit(' ')
-		return true, err
-	case '*':
-		r.in.Discard(2)
-		r.inOffset += 2 // already peeked
-		start := len(r.buf)
-		r.buf = append(r.buf, '/', '*')
-		var prev byte
-		for {
-			c, err := r.readByte()
-			if err != nil {
-				// Leave an unfinished comment for jsontext to reject.
-				if err == io.EOF {
-					r.outOffset += int64(len(r.buf) - start)
-				} else {
-					r.buf = r.buf[:start]
+		switch prefix[1] {
+		case '/':
+			r.in.Discard(2)
+			r.inOffset += 2 // already peeked
+			err = r.lineComment()
+		case '*':
+			r.in.Discard(2)
+			r.inOffset += 2 // already peeked
+			r.inComment = true
+			start := len(r.buf)
+			r.buf = append(r.buf, '/', '*')
+			var prev byte
+			for {
+				c, err := r.readByte()
+				if err != nil {
+					// Leave an unfinished comment for jsontext to reject.
+					if err == io.EOF {
+						b := r.buf[start:]
+						r.buf = r.buf[:start]
+						r.emit(b...)
+					} else {
+						r.buf = r.buf[:start]
+					}
+					return true, err
 				}
-				return true, err
+				r.buf = append(r.buf, c)
+				if prev == '*' && c == '/' {
+					r.inComment = false
+					r.buf = r.buf[:start]
+					break
+				}
+				prev = c
 			}
-			r.buf = append(r.buf, c)
-			if prev == '*' && c == '/' {
-				r.buf = r.buf[:start]
-				r.emit(' ')
-				return true, nil
-			}
-			prev = c
+		default:
+			return false, nil
 		}
 	default:
 		return false, nil
 	}
+	if r.last == 0 {
+		r.lastShift = r.outOffset - r.inOffset
+	}
+	r.triviaEnd = r.inOffset
+	return true, err
 }
 
 func (r *RelaxedReader) lineComment() error {
+	r.inComment = true
 	for {
 		c, err := r.readByte()
 		if err == io.EOF {
@@ -430,6 +462,7 @@ func (r *RelaxedReader) lineComment() error {
 			return err
 		}
 		if c == '\n' || c == '\r' {
+			r.inComment = false
 			return nil
 		}
 	}

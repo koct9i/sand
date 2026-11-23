@@ -14,6 +14,7 @@ import (
 // RelaxedJSONArguments parses successive arguments as lines of one relaxed JSON object.
 // Outer braces are optional. T describes the object; JSON field names and help
 // tags supply completion candidates and descriptions, including nested fields.
+// Value completion suggests literals and container openers using their Go types.
 // Like StringArgs, Max must be positive or -1 for unlimited arguments.
 type RelaxedJSONArguments[T any] struct {
 	Name        string         `json:"name"`
@@ -66,9 +67,7 @@ func (a *RelaxedJSONArguments[T]) Parse(args []string) ([]string, error) {
 	if count > 0 {
 		input := strings.Join(args[:count], "\n")
 		reader := jsonr.NewRelaxedReader(strings.NewReader(input))
-		if jsonrNeedsObjectWrap(input) {
-			reader.Wrap('{')
-		}
+		reader.Wrap('{')
 		if err := reader.SourceError(json.UnmarshalRead(reader, &value, a.Options...)); err != nil {
 			return args, fmt.Errorf("invalid relaxed JSON for argument %s: %w", a.Name, err)
 		}
@@ -93,17 +92,23 @@ func (a *RelaxedJSONArguments[T]) Complete(_ context.Context, c *Completion) {
 	if wrapped {
 		input = "{" + input
 	}
-	start := jsonrTokenStart(input)
+	token, pointer, closer, start, valuePosition := jsonr.GetLastToken(strings.NewReader(input))
 	if start < 0 {
 		return // The cursor is inside a comment.
 	}
-	token, pointer, closer := jsonr.GetLastToken([]byte(input))
 	start -= len(input) - len(prefix)
-	if start >= 0 && strings.HasSuffix(pointer, "/") {
-		fields := map[string]string{}
-		jsonr.StructCompletion(reflect.TypeFor[T]())(pointer, token, fields)
-		for name, help := range fields {
-			c.Suggest(prefix[:start]+name+":", help)
+	if start >= 0 {
+		completions := map[string]string{}
+		if valuePosition {
+			jsonr.ValueCompletion(reflect.TypeFor[T]())(pointer, token, completions)
+		} else if pointer != "" {
+			jsonr.StructCompletion(reflect.TypeFor[T]())(pointer, token, completions)
+		}
+		for replacement, help := range completions {
+			if !valuePosition {
+				replacement += ":"
+			}
+			c.Suggest(prefix[:start]+replacement, help)
 		}
 	}
 	closing := closer
@@ -116,53 +121,6 @@ func (a *RelaxedJSONArguments[T]) Complete(_ context.Context, c *Completion) {
 			c.Suggest(prefix+closing, "")
 		}
 	}
-}
-
-// jsonrTokenStart locates the source spelling of the last token, including its
-// opening quote. GetLastToken returns decoded text, which can have another width.
-// A negative result means the cursor is inside a comment.
-func jsonrTokenStart(input string) int {
-	start := 0
-	for i := 0; i < len(input); {
-		if input[i] == '#' || strings.HasPrefix(input[i:], "//") {
-			end := strings.IndexAny(input[i:], "\r\n")
-			if end < 0 {
-				return -1
-			}
-			i += end
-			start = i
-			continue
-		}
-		if strings.HasPrefix(input[i:], "/*") {
-			end := strings.Index(input[i+2:], "*/")
-			if end < 0 {
-				return -1
-			}
-			i += end + 4
-			start = i
-			continue
-		}
-		c := input[i]
-		i++
-		switch c {
-		case ' ', '\t', '\r', '\n', '{', '}', '[', ']', ',', ':':
-			start = i
-		case '\'', '"':
-			start = i - 1
-			for i < len(input) {
-				next := input[i]
-				i++
-				if next == '\\' && i < len(input) {
-					i++
-				} else if next == c {
-					break
-				}
-			}
-		default:
-			// A bare token continues until whitespace, punctuation, or a quote.
-		}
-	}
-	return start
 }
 
 // Inspect the first token so braces preceded by comments are recognized too.

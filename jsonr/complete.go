@@ -2,6 +2,7 @@ package jsonr
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/json/jsontext"
 	"errors"
 	"io"
@@ -10,15 +11,20 @@ import (
 	"strings"
 )
 
-// GetLastToken returns the token at the end of relaxed JSON input, its completion
-// position as a JSON Pointer, and the closing quotes and containers still open.
+// GetLastToken reads input and returns the token at the end of relaxed JSON input,
+// its completion position as a JSON Pointer, the closing quotes and containers
+// still open, and the token's byte offset in the original input, including any
+// opening quote. value reports whether the cursor is completing a value rather
+// than an object name or an already completed document.
+// When there is no active token, the offset is the number of source bytes read.
+// An offset of -1 means input ends inside a comment.
 // String tokens are unquoted. A separator or trailing whitespace clears token;
 // arrays then point to the next element, and object names use an empty final
 // pointer component until a colon is entered. Incomplete strings with unfinished
 // escapes retain their encoded content. Parsing stops at the first syntax error.
-func GetLastToken(in []byte) (token, pointer, closer string) {
-	src := NewRelaxedReader(bytes.NewReader(in))
-	d := jsontext.NewDecoder(src, jsontext.AllowDuplicateNames(true))
+func GetLastToken(input io.Reader) (token, pointer, closer string, start int, value bool) {
+	relaxed := NewRelaxedReader(input)
+	d := jsontext.NewDecoder(relaxed, jsontext.AllowDuplicateNames(true))
 	var last jsontext.Kind
 	var text string
 	var err error
@@ -31,13 +37,16 @@ func GetLastToken(in []byte) (token, pointer, closer string) {
 		last, text = t.Kind(), t.String()
 	}
 
+	start = int(relaxed.inOffset)
 	tail := d.UnreadBuffer()
+	atToken := relaxed.inOffset > relaxed.triviaEnd
 	active := false
 	switch last {
 	case '"', '0', 'n', 't', 'f':
-		active = len(tail) == 0
+		active = len(tail) == 0 && atToken
 		if active {
 			token = text
+			start = int(relaxed.lastStart)
 		}
 	}
 	rest := bytes.TrimLeft(tail, " \t\r\n")
@@ -45,15 +54,17 @@ func GetLastToken(in []byte) (token, pointer, closer string) {
 	if len(rest) > 0 && (rest[0] == ':' || rest[0] == ',') {
 		rest = bytes.TrimLeft(rest[1:], " \t\r\n")
 	}
-	if errors.Is(err, io.ErrUnexpectedEOF) && len(rest) > 0 {
+	if atToken && errors.Is(err, io.ErrUnexpectedEOF) && len(rest) > 0 {
 		switch {
 		case rest[0] == '"':
+			start = int(relaxed.lastStart)
 			token = string(rest[1:])
 			if decoded, err := jsontext.AppendUnquote(nil, string(rest)+`"`); err == nil {
 				token = string(decoded)
 			}
-			closer = string(src.last)
+			closer = string(relaxed.last)
 		case rest[0] == '-' || rest[0] >= '0' && rest[0] <= '9':
+			start = int(relaxed.lastStart)
 			token = string(rest)
 		}
 	}
@@ -67,16 +78,20 @@ func GetLastToken(in []byte) (token, pointer, closer string) {
 	}
 	switch kind {
 	case '{':
-		if count%2 == 1 && colon || count%2 == 0 && active {
+		value = count%2 == 1 && colon || count%2 == 0 && active
+		if value {
 			pointer = string(path)
 		} else {
 			pointer = string(base.AppendToken(""))
 		}
 	case '[':
+		value = true
 		if active {
 			count--
 		}
 		pointer = string(base.AppendToken(strconv.FormatInt(count, 10)))
+	default:
+		value = count == 0 || active
 	}
 	closing := make([]byte, 0, len(closer)+depth)
 	closing = append(closing, closer...)
@@ -89,17 +104,15 @@ func GetLastToken(in []byte) (token, pointer, closer string) {
 		}
 	}
 	closer = string(closing)
-	return token, pointer, closer
+	if relaxed.inComment {
+		start = -1
+	}
+	return token, pointer, closer, start, value
 }
 
 // CompletionFunc adds matching replacements and their descriptions to completions.
-// pointer is relative to the handler's registration path; prefix is unquoted.
+// pointer is the completion position as a JSON Pointer; prefix is unquoted.
 type CompletionFunc func(pointer, prefix string, completions map[string]string)
-
-// Completor dispatches completion to the handler at the nearest ancestor pointer.
-type Completor struct {
-	Handlers map[string]CompletionFunc
-}
 
 // StructCompletion completes exported JSON field names using help tags as
 // descriptions. s may be a struct, a pointer to one (including nil), or its
@@ -108,46 +121,19 @@ type Completor struct {
 // end in an empty component and may traverse structs, arrays, slices, and maps.
 // Replacements are complete relaxed JSON strings, without a following colon.
 func StructCompletion(s any) CompletionFunc {
-	root, ok := s.(reflect.Type)
-	if !ok {
-		root = reflect.TypeOf(s)
-	}
+	root := completionRoot(s)
 	return func(pointer, prefix string, completions map[string]string) {
 		if completions == nil {
 			return
 		}
-		t := root
+		p := jsontext.Pointer(pointer)
 		if pointer != "" {
-			p := jsontext.Pointer(pointer)
 			if !p.IsValid() || !strings.HasSuffix(pointer, "/") {
 				return
 			}
-			for name := range p.Parent().Tokens() {
-				t = completionType(t)
-				if t == nil {
-					return
-				}
-				switch t.Kind() {
-				case reflect.Struct:
-					field, ok := completionFields(t)[name]
-					if !ok || field.ambiguous {
-						return
-					}
-					t = field.typ
-				case reflect.Array, reflect.Slice:
-					i, err := strconv.ParseUint(name, 10, 64)
-					if err != nil || strconv.FormatUint(i, 10) != name || t.Kind() == reflect.Array && i >= uint64(t.Len()) {
-						return
-					}
-					t = t.Elem()
-				case reflect.Map:
-					t = t.Elem()
-				default:
-					return
-				}
-			}
+			p = p.Parent()
 		}
-		t = completionType(t)
+		t := completionType(completionAt(root, p))
 		if t == nil || t.Kind() != reflect.Struct {
 			return
 		}
@@ -160,6 +146,115 @@ func StructCompletion(s any) CompletionFunc {
 			}
 		}
 	}
+}
+
+// ValueCompletion completes values at a JSON Pointer using their Go type.
+// It suggests container openers, boolean literals, string placeholders, zero
+// numbers, and null for nullable types. Empty interfaces accept every JSON value kind.
+// String values always suggest _STRING_ and an empty replacement, regardless of
+// prefix, to prevent the shell from falling back to unrelated completions.
+// Each suggestion's description is its JSON Pointer.
+// Byte arrays and text-unmarshaled types use an opening quote when an empty
+// string may not be a valid value. prefix is the unquoted token being replaced.
+// s accepts the same value and reflect.Type forms as StructCompletion.
+func ValueCompletion(s any) CompletionFunc {
+	root := completionRoot(s)
+	return func(pointer, prefix string, completions map[string]string) {
+		if completions == nil {
+			return
+		}
+		t := completionAt(root, jsontext.Pointer(pointer))
+		if t == nil {
+			return
+		}
+		nullable := t.Kind() == reflect.Pointer
+		t = completionType(t)
+		nullable = nullable || t.Kind() == reflect.Map || t.Kind() == reflect.Slice || t.Kind() == reflect.Interface
+		var candidates []string
+		switch {
+		case reflect.PointerTo(t).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()):
+			candidates = []string{`"`}
+		default:
+			switch t.Kind() {
+			case reflect.Struct, reflect.Map:
+				candidates = []string{"{"}
+			case reflect.Array, reflect.Slice:
+				if t.Elem().Kind() == reflect.Uint8 {
+					if t.Kind() == reflect.Array && t.Len() != 0 {
+						candidates = []string{`"`}
+					} else {
+						candidates = []string{`""`}
+					}
+				} else {
+					candidates = []string{"["}
+				}
+			case reflect.Bool:
+				candidates = []string{"true", "false"}
+			case reflect.String:
+				if prefix == "" {
+					candidates = []string{"_", "string"}
+				} else {
+					candidates = []string{prefix, prefix+","}
+				}
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+				reflect.Float32, reflect.Float64:
+				candidates = []string{"0", "1"}
+			case reflect.Interface:
+				if t.NumMethod() == 0 {
+					candidates = []string{"{", "[", "true", "false", `""`, "0"}
+				}
+			default:
+				return
+			}
+		}
+		if nullable {
+			candidates = append(candidates, "null")
+		}
+		for _, candidate := range candidates {
+			if strings.HasPrefix(candidate, prefix) {
+				completions[candidate] = pointer
+			}
+		}
+	}
+}
+
+func completionRoot(s any) reflect.Type {
+	if t, ok := s.(reflect.Type); ok {
+		return t
+	}
+	return reflect.TypeOf(s)
+}
+
+func completionAt(t reflect.Type, pointer jsontext.Pointer) reflect.Type {
+	if !pointer.IsValid() {
+		return nil
+	}
+	for name := range pointer.Tokens() {
+		t = completionType(t)
+		if t == nil {
+			return nil
+		}
+		switch t.Kind() {
+		case reflect.Struct:
+			field, ok := completionFields(t)[name]
+			if !ok || field.ambiguous {
+				return nil
+			}
+			t = field.typ
+		case reflect.Array, reflect.Slice:
+			i, err := strconv.ParseUint(name, 10, 64)
+			if err != nil || strconv.FormatUint(i, 10) != name || t.Kind() == reflect.Array && i >= uint64(t.Len()) {
+				return nil
+			}
+			t = t.Elem()
+		case reflect.Map:
+			t = t.Elem()
+		default:
+			return nil
+		}
+	}
+	return t
 }
 
 func completionType(t reflect.Type) reflect.Type {
@@ -250,24 +345,4 @@ func completionFieldName(f reflect.StructField) (name string, tagged, embedded, 
 		}
 	}
 	return name, tagged, embedded, true
-}
-
-func (c *Completor) GetCompletions(in []byte) map[string]string {
-	completions := map[string]string{}
-	token, pointer, closer := GetLastToken(in)
-
-	for p := jsontext.Pointer(pointer); ; p = p.Parent() {
-		if handler := c.Handlers[string(p)]; handler != nil {
-			handler(pointer[len(p):], token, completions)
-			break
-		}
-		if p == "" {
-			break
-		}
-	}
-
-	if _, exists := completions[token+closer]; !exists {
-		completions[token+closer] = ""
-	}
-	return completions
 }

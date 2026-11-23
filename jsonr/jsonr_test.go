@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func TestUnmarshalRelaxed(t *testing.T) {
@@ -194,9 +195,17 @@ func TestRelaxedReaderWrap(t *testing.T) {
 	}{
 		{"empty array", ``, `[]`, '['},
 		{"empty object", ``, `{}`, '{'},
+		{"object whitespace", " \t\r\n", `{}`, '{'},
 		{"whitespace", " \t\r\n", `[]`, '['},
 		{"comment only", `# empty`, `{}`, '{'},
 		{"comments only", "/* empty */ // empty\n", `[]`, '['},
+		{"object comments only", "/* empty */ // empty\n", `{}`, '{'},
+		{"explicit empty object", `{}`, `{}`, '{'},
+		{"explicit object", `{a:1 b:[2 3]}`, `{"a":1,"b":[2,3]}`, '{'},
+		{"explicit object after whitespace", " \t\r\n{a:1}", `{"a":1}`, '{'},
+		{"explicit object after comments", "# config\n/* leading */ // note\n{a:1,} # done", `{"a":1}`, '{'},
+		{"brace inside leading comment", "/* { */ # {\na:1", `{"a":1}`, '{'},
+		{"array wrapping stays unconditional", `[1 2]`, `[[1,2]]`, '['},
 		{"number at EOF", `42`, `[42]`, '['},
 		{"bare string at EOF", `bare`, `["bare"]`, '['},
 		{"literal at EOF", `true`, `[true]`, '['},
@@ -230,6 +239,48 @@ func TestRelaxedReaderWrap(t *testing.T) {
 			if n, err := r.Read(make([]byte, 1)); n != 0 || err != io.EOF {
 				t.Fatalf("Read after EOF = %d, %v", n, err)
 			}
+			// Exercise both input and output boundaries while detecting the first token.
+			r = NewRelaxedReader(iotest.OneByteReader(strings.NewReader(tt.input)))
+			r.Wrap(tt.wrap)
+			output, err := io.ReadAll(iotest.OneByteReader(r))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = nil
+			if err := json.Unmarshal(output, &got); err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("one byte reads: output %q, value %#v, error %v; want %#v", output, got, err, want)
+			}
+		})
+	}
+}
+
+func TestRelaxedReaderTrivia(t *testing.T) {
+	for _, tt := range []struct {
+		name, input, want string
+		wrap              byte
+	}{
+		{"unwrapped", " \t\r\n/* note */ # note\n{a:1} \n", `{"a":1}`, 0},
+		{"between numbers", `[1/*xx*/2]`, `[1,2]`, 0},
+		{"between bare tokens", `[tr/*xx*/ue]`, `["tr","ue"]`, 0},
+		{"object separators", `{ /* note */ a /* note */ : [ 1 /* note */ 2 ] b : ' x y ' }`, `{"a":[1,2],"b":" x y "}`, 0},
+		{"implicit object", " // note\n a:1", `{"a":1}`, '{'},
+		{"explicit object", " \t/* note */{a:1}", `{"a":1}`, '{'},
+		{"quoted brace", " \t'{':1", `{"{":1}`, '{'},
+		{"number", " \t/* note */1", `[1]`, '['},
+		{"literal", " \ttrue", `[true]`, '['},
+		{"string content", " \t/* note */' x'", `[" x"]`, '['},
+		{"comments only", " // note\n/* note */", ``, 0},
+		{"empty object", " // note\n/* note */", `{}`, '{'},
+		{"empty array", " \t\r\n", `[]`, '['},
+		{"long prefix", strings.Repeat(" \t\n", 4096) + "/* note */{a:1}", `{"a":1}`, '{'},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewRelaxedReader(iotest.OneByteReader(strings.NewReader(tt.input)))
+			r.Wrap(tt.wrap)
+			output, err := io.ReadAll(r)
+			if err != nil || string(output) != tt.want {
+				t.Fatalf("ReadAll = %q, %v; want %q, nil", output, err, tt.want)
+			}
 		})
 	}
 }
@@ -243,6 +294,8 @@ func TestRelaxedReaderWrapRejectsMalformedInput(t *testing.T) {
 		{'[', `1 /* unfinished`}, {'[', `[1`}, {'[', `]`},
 		{'{', `,`}, {'{', `a`}, {'{', `a:`}, {'{', `a:,`},
 		{'{', `a 1`}, {'{', `a:1,,`}, {'{', `a:{b:1`}, {'{', `true:1`},
+		{'{', `{a:1`}, {'{', `/* leading */ {a:1`}, {'{', `{} {}`},
+		{'{', `{},`}, {'{', `{a:1} garbage`}, {'{', `/* unfinished`},
 	} {
 		t.Run(string(tt.wrap)+tt.input, func(t *testing.T) {
 			r := NewRelaxedReader(strings.NewReader(tt.input))
@@ -257,14 +310,30 @@ func TestRelaxedReaderWrapRejectsMalformedInput(t *testing.T) {
 func TestSourceErrorOffsets(t *testing.T) {
 	for _, prefix := range []string{
 		`/* leading 日本 */`, "# leading\n",
+		" \t\n", " \t/* leading 日本 */",
 		`{a:'a"b\'c',/* comment */bad:`,
 		`/* comment */{a:[1 2] b:{c:3 d:4} bad:`,
 	} {
 		t.Run(prefix, func(t *testing.T) {
-			err := Unmarshal([]byte(prefix+"?}"), new(any))
+			for _, wrap := range []byte{0, '{', '['} {
+				r := NewRelaxedReader(strings.NewReader(prefix + "?}"))
+				r.Wrap(wrap)
+				err := r.SourceError(json.UnmarshalRead(r, new(any)))
+				var syntax *jsontext.SyntacticError
+				if !errors.As(err, &syntax) || syntax.ByteOffset != int64(len(prefix)) {
+					t.Fatalf("wrap %q: got %v, want syntax error at source byte %d", wrap, err, len(prefix))
+				}
+			}
+		})
+	}
+	for _, input := range []string{
+		`[1 `, `[1 /* done */`, "{a: \n/* done */",
+	} {
+		t.Run(input, func(t *testing.T) {
+			err := Unmarshal([]byte(input), new(any))
 			var syntax *jsontext.SyntacticError
-			if !errors.As(err, &syntax) || syntax.ByteOffset != int64(len(prefix)) {
-				t.Fatalf("got %v, want syntax error at source byte %d", err, len(prefix))
+			if !errors.As(err, &syntax) || syntax.ByteOffset != int64(len(input)) {
+				t.Fatalf("got %v, want syntax error at source byte %d", err, len(input))
 			}
 		})
 	}

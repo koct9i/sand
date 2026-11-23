@@ -125,7 +125,29 @@ func TestJSONRArgsCompletion(t *testing.T) {
 		}},
 		{[]string{"na"}, map[string]string{"name:": "Service name"}},
 		{[]string{"{na"}, map[string]string{"{name:": "Service name"}},
+		{[]string{"byName:"}, map[string]string{"byName:{": "/byName", "byName:null": "/byName"}},
+		{[]string{"byName:", ""}, map[string]string{"{": "/byName", "null": "/byName"}},
+		{[]string{"{byName:"}, map[string]string{"{byName:{": "/byName", "{byName:null": "/byName"}},
+		{[]string{"byName: /* done */"}, map[string]string{"byName: /* done */{": "/byName", "byName: /* done */null": "/byName"}},
+		{[]string{"byName:n"}, map[string]string{"byName:null": "/byName"}},
+		{[]string{"byName:{primary:"}, map[string]string{"byName:{primary:{": "/byName/primary"}},
+		{[]string{"byName:{'':"}, map[string]string{"byName:{'':{": "/byName/"}},
+		{[]string{"byName:{"}, map[string]string{"byName:{}": ""}},
+		{[]string{"server:"}, map[string]string{"server:{": "/server"}},
+		{[]string{"servers:"}, map[string]string{"servers:[": "/servers", "servers:null": "/servers"}},
+		{[]string{"servers:["}, map[string]string{"servers:[{": "/servers/0", "servers:[]": ""}},
+		{[]string{"server:{ports:"}, map[string]string{"server:{ports:[": "/server/ports", "server:{ports:null": "/server/ports"}},
+		{[]string{"server:{ports:["}, map[string]string{"server:{ports:[0": "/server/ports/0", "server:{ports:[1": "/server/ports/0", "server:{ports:[]}": ""}},
+		{[]string{"enabled:"}, map[string]string{"enabled:true": "/enabled", "enabled:false": "/enabled"}},
+		{[]string{"enabled:t"}, map[string]string{"enabled:true": "/enabled"}},
+		{[]string{"enabled:f"}, map[string]string{"enabled:false": "/enabled"}},
+		{[]string{"name:"}, map[string]string{"name:_": "/name", "name:string": "/name"}},
+		{[]string{"name:hello"}, map[string]string{"name:hello": "/name", "name:hello,": "/name"}},
+		{[]string{"name:", "hello"}, map[string]string{"hello": "/name", "hello,": "/name"}},
 		{[]string{"name:example en"}, map[string]string{"name:example enabled:": "Enable service"}},
+		{[]string{`name:"x"en`}, map[string]string{`name:"x"enabled:`: "Enable service"}},
+		{[]string{`name:'x'en`}, map[string]string{`name:'x'enabled:`: "Enable service"}},
+		{[]string{`name:'x'/* done */en`}, map[string]string{`name:'x'/* done */enabled:`: "Enable service"}},
 		{[]string{"server:{ho"}, map[string]string{"server:{host:": "Server host"}},
 		{[]string{"server:{", "ho"}, map[string]string{"host:": "Server host"}},
 		{[]string{"servers:[{", "ho"}, map[string]string{"host:": "Server host"}},
@@ -134,9 +156,13 @@ func TestJSONRArgsCompletion(t *testing.T) {
 		{[]string{"'two w"}, map[string]string{"\"two words\":": "Quoted field"}},
 		{[]string{"/* comment */ na"}, map[string]string{"/* comment */ name:": "Service name"}},
 		{[]string{"name:example # comment", "en"}, map[string]string{"enabled:": "Enable service"}},
-		{[]string{"server:{host:localhost"}, map[string]string{"server:{host:localhost}": ""}},
-		{[]string{"name:'hel"}, map[string]string{"name:'hel'": ""}},
+		{[]string{"server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host", "server:{host:localhost,": "/server/host", "server:{host:localhost}": ""}},
+		{[]string{"name:'hel"}, map[string]string{"name:hel": "/name", "name:hel,": "/name", "name:'hel'": ""}},
 		{[]string{"# comment"}, map[string]string{}},
+		{[]string{"// comment"}, map[string]string{}},
+		{[]string{"name:example # comment"}, map[string]string{}},
+		{[]string{"name:example // comment"}, map[string]string{}},
+		{[]string{"name:example /* unfinished"}, map[string]string{}},
 		{[]string{"/* unfinished"}, map[string]string{}},
 		{[]string{"{name:example}"}, map[string]string{}},
 	} {
@@ -208,6 +234,34 @@ func TestJSONRArgsShellCompletion(t *testing.T) {
 				t.Fatalf("%s completion of %v: output %q, destination %#v", shell, args, output.String(), destination)
 			}
 		}
+	}
+}
+
+func TestJSONRArgsValueShellCompletion(t *testing.T) {
+	root := &cli.Command{
+		Name:      "configure",
+		Arguments: []cli.Argument{&cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Max: -1}},
+	}
+	for _, tt := range []struct {
+		shell, input, want string
+	}{
+		{"bash", "byName:", "byName:null   (/byName)\nbyName:{      (/byName)\n"},
+		{"fish", "byName:", "byName:null\t/byName\nbyName:{\t/byName\n"},
+		{"zsh", "byName:", "byName\\:null:/byName\nbyName\\:{:/byName\n"},
+		{"bash", "enabled:", "enabled:false   (/enabled)\nenabled:true    (/enabled)\n"},
+		{"fish", "enabled:", "enabled:false\t/enabled\nenabled:true\t/enabled\n"},
+		{"zsh", "enabled:", "enabled\\:false:/enabled\nenabled\\:true:/enabled\n"},
+	} {
+		t.Run(tt.shell+"/"+tt.input, func(t *testing.T) {
+			c := cli.MakeCompletion(t.Context(), root, tt.shell, []string{tt.input}, nil)
+			var output bytes.Buffer
+			if err := c.Reply(&output); err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != tt.want {
+				t.Fatalf("Reply = %q, want %q", output.String(), tt.want)
+			}
+		})
 	}
 }
 

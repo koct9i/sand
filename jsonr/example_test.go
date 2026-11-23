@@ -52,9 +52,9 @@ func ExampleRelaxedWriter() {
 }
 
 func ExampleGetLastToken() {
-	token, pointer, closer := jsonr.GetLastToken([]byte(`{users:[al`))
-	fmt.Printf("%q %q %q\n", token, pointer, closer)
-	// Output: "al" "/users/0" "]}"
+	token, pointer, closer, start, value := jsonr.GetLastToken(strings.NewReader(`{users:[al`))
+	fmt.Printf("%q %q %q %d %t\n", token, pointer, closer, start, value)
+	// Output: "al" "/users/0" "]}" 8 true
 }
 
 func ExampleStructCompletion() {
@@ -65,6 +65,16 @@ func ExampleStructCompletion() {
 	jsonr.StructCompletion(config{})("/", "na", completions)
 	fmt.Println(completions)
 	// Output: map[name:Service name]
+}
+
+func ExampleValueCompletion() {
+	type config struct {
+		Enabled bool `json:"enabled"`
+	}
+	completions := map[string]string{}
+	jsonr.ValueCompletion(config{})("/enabled", "t", completions)
+	fmt.Println(completions)
+	// Output: map[true:/enabled]
 }
 
 func ExampleRelaxedReader_Wrap() {
