@@ -43,10 +43,12 @@ func TestCompletionExamples(t *testing.T) {
 		{"omit selected arguments", "fish", []string{"arguments", "staging", "3", "api", ""}, map[string]string{"web": "Web frontend", "worker": "Background jobs"}},
 		{"json field", "fish", []string{"json", "ser"}, map[string]string{"server:": "Server settings"}},
 		{"nested json field", "fish", []string{"json", "server:{", "ho"}, map[string]string{"host:": "Server host"}},
-		{"json object", "fish", []string{"json", "server:"}, map[string]string{"server:{": "/server"}},
+		{"omit used json field", "fish", []string{"json", "server:{host:localhost", ""}, map[string]string{"port:": "Server port", "}": "close"}},
+		{"json object", "fish", []string{"json", "server:"}, map[string]string{"server:{}": "/server", "server:{host:": "Server host", "server:{port:": "Server port"}},
+		{"bash json object", "bash", []string{"json", "server", ":", ""}, map[string]string{"{}": "/server", "{host:": "Server host", "{port:": "Server port"}},
 		{"json boolean", "fish", []string{"json", "enabled:"}, map[string]string{"enabled:true": "/enabled", "enabled:false": "/enabled"}},
 		{"json slice", "fish", []string{"json", "tags:"}, map[string]string{"tags:[": "/tags", "tags:null": "/tags"}},
-		{"json closer", "fish", []string{"json", "server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host", "server:{host:localhost,": "/server/host", "server:{host:localhost}": ""}},
+		{"json closer", "fish", []string{"json", "server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host", "server:{host:localhost,": "/server/host", "server:{host:localhost}": "close"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := &cli.Command{

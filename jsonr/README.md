@@ -73,35 +73,45 @@ wrapping always adds an outer array. Empty input produces an empty container.
 Whitespace and comments between tokens are discarded. Decode the result with
 `json.UnmarshalRead`.
 
-`GetLastToken(reader)` inspects incomplete input from an `io.Reader` for
-completion. It returns the token at the cursor, its completion position as a JSON
-Pointer, the closing quotes and containers still open, the token's byte offset
-in the original input, including any opening quote, and whether the cursor is
-completing a value. For example, `{a:[0` returns `("0", "/a/0", "]}", 4, true)`;
-`{na` returns `("na", "/", "}", 1, false)` because it completes an object name.
+`MakeCompletion(reader)` inspects incomplete input from a `RelaxedReader` for
+completion. It returns a `Completion` with the token at the cursor, its completion
+position as a JSON Pointer, the closing quotes and containers still open, the
+token's byte offset in the original input, including any opening quote, whether
+the cursor is completing a value, and the keys already read in the current object.
+Keys are unquoted, exclude the active name being completed, and are nil outside
+an object. For example, input `{a:1 b` produces `Keys: []string{"a"}`.
 Trailing whitespace clears the token, advances the array position to `/a/1`, and
 sets the offset to the input length. An offset of `-1` indicates that input ends
 inside a line or block comment, where completion should be suppressed.
 
-`StructCompletion(Config{})` creates a field-name completion handler. It uses
-`json` tags for names and `help` tags for descriptions, skips ignored and
+Pass a configured `*RelaxedReader` to `MakeCompletion` to complete an implicit
+object or array. `Completion.Wrap` reports the reader's active wrapping mode;
+it is zero when an explicit outer object disables object wrapping. Implicit
+containers remain open at EOF and are excluded from `Closer`, while `Start` still
+refers to the original source.
+
+`completion.Complete(Config{}, results)` adds matching replacements, selecting
+field names or values from the parsed completion state. Field suggestions use
+the completion's token and pointer, omitting keys already read in that object.
+It uses `json` tags for names and `help` tags for descriptions, skips ignored and
 unexported fields, and follows pointers into nested structs, arrays, slices, and
 map values. Results map complete relaxed JSON field names to descriptions;
-quoted names stay quoted, and no colon is appended. For example, a field tagged
-`json:"name" help:"Service name"` produces `map["name"] = "Service name"`.
-Call the handler with the pointer and token returned by `GetLastToken`.
+quoted names stay quoted, and field names include a following colon. For example,
+a field tagged `json:"name" help:"Service name"` produces
+`map["name:"] = "Service name"`. Comments and completed documents produce no
+suggestions. Create the completion with `MakeCompletion(reader)`.
 
-`ValueCompletion(Config{})` creates a handler for value positions. It follows the
-full JSON Pointer, includes it in each suggestion's description, and suggests
-`{` for structs and maps, `[` for arrays and
-slices, `true` and `false` for booleans, and `0` for numbers. Strings always offer
-`_STRING_` and a zero-length replacement for any prefix, preventing shell fallback
-to unrelated completions.
+At value positions, `Complete` follows the full JSON Pointer and suggests `{}`
+for structs and maps, `{field:` for struct fields, `[` for arrays and slices,
+`true` and `false` for booleans, and `0` and `1` for numbers.
+Struct fields use `help` tags as descriptions; other suggestions use
+the JSON Pointer. Empty string prefixes offer `_` and `string`; nonempty string
+prefixes offer themselves with and without a trailing comma, preventing unrelated
+shell completions.
 Pointers, maps, slices, and interfaces also offer `null`; empty interfaces offer
 every JSON value kind. Byte slices use `""` for their base64 string representation,
 while nonempty byte arrays and text-unmarshaled types offer an opening `"`.
-Other suggestions match the current token prefix. Select `ValueCompletion` when
-the last result from `GetLastToken` is true, and `StructCompletion` for object names.
+Other suggestions match the current token prefix.
 
 Options from both standard packages work directly, including indentation,
 deterministic map ordering, custom marshalers/unmarshalers, unknown-member

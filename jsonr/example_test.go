@@ -51,28 +51,34 @@ func ExampleRelaxedWriter() {
 	// Output: {name:example ports:[8080 8081]}
 }
 
-func ExampleGetLastToken() {
-	token, pointer, closer, start, value := jsonr.GetLastToken(strings.NewReader(`{users:[al`))
-	fmt.Printf("%q %q %q %d %t\n", token, pointer, closer, start, value)
-	// Output: "al" "/users/0" "]}" 8 true
+func ExampleMakeCompletion() {
+	last := jsonr.MakeCompletion(jsonr.NewRelaxedReader(strings.NewReader(`{users:[al`)))
+	fmt.Printf("%q %q %q %d %t\n", last.Token, last.Pointer, last.Closer, last.Start, last.Value)
+	last = jsonr.MakeCompletion(jsonr.NewRelaxedReader(strings.NewReader(`{name:demo en`)))
+	fmt.Println(last.Keys)
+	// Output:
+	// "al" "/users/0" "]}" 8 true
+	// [name]
 }
 
-func ExampleStructCompletion() {
+func ExampleCompletion_Complete_fields() {
 	type config struct {
 		Name string `json:"name" help:"Service name"`
 	}
 	completions := map[string]string{}
-	jsonr.StructCompletion(config{})("/", "na", completions)
+	completion := jsonr.MakeCompletion(jsonr.NewRelaxedReader(strings.NewReader(`{na`)))
+	completion.Complete(config{}, completions)
 	fmt.Println(completions)
-	// Output: map[name:Service name]
+	// Output: map[name::Service name]
 }
 
-func ExampleValueCompletion() {
+func ExampleCompletion_Complete_values() {
 	type config struct {
 		Enabled bool `json:"enabled"`
 	}
 	completions := map[string]string{}
-	jsonr.ValueCompletion(config{})("/enabled", "t", completions)
+	completion := jsonr.MakeCompletion(jsonr.NewRelaxedReader(strings.NewReader(`{enabled:t`)))
+	completion.Complete(config{}, completions)
 	fmt.Println(completions)
 	// Output: map[true:/enabled]
 }

@@ -23,6 +23,7 @@ sand example completion json name:demo 'server:{host:localhost port:8080}'
 - `--fields` accepts a bare flag, which selects the default `id,name` fields.
 - `arguments` completes a string, an integer, and any number of service names.
 - `json` completes field names and nested fields across multiple shell arguments.
+  Keys already present in the current object are omitted.
 
 To inspect suggestions directly without installing a shell script:
 

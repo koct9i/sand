@@ -7,46 +7,77 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
 
-// GetLastToken reads input and returns the token at the end of relaxed JSON input,
+// Completion holds the token and parser state at the end of relaxed JSON input.
+type Completion struct {
+	Token   string
+	Pointer string
+	Closer  string
+	Start   int
+	Value   bool
+	Keys    []string
+	Wrap    byte
+}
+
+// MakeCompletion reads input and returns the token at the end of relaxed JSON input,
 // its completion position as a JSON Pointer, the closing quotes and containers
 // still open, and the token's byte offset in the original input, including any
-// opening quote. value reports whether the cursor is completing a value rather
+// opening quote. Value reports whether the cursor is completing a value rather
 // than an object name or an already completed document.
+// Keys contains the unquoted names already read in the current object, excluding
+// the active name being completed. It is nil outside an object.
+// A *RelaxedReader input is used directly, preserving its wrapping configuration.
+// Wrap reports its implicit container, or zero when wrapping is disabled.
+// Implicit containers stay open at EOF and are excluded from Closer.
 // When there is no active token, the offset is the number of source bytes read.
 // An offset of -1 means input ends inside a comment.
 // String tokens are unquoted. A separator or trailing whitespace clears token;
 // arrays then point to the next element, and object names use an empty final
 // pointer component until a colon is entered. Incomplete strings with unfinished
 // escapes retain their encoded content. Parsing stops at the first syntax error.
-func GetLastToken(input io.Reader) (token, pointer, closer string, start int, value bool) {
-	relaxed := NewRelaxedReader(input)
-	d := jsontext.NewDecoder(relaxed, jsontext.AllowDuplicateNames(true))
+func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
+	in.openWrap = true
+	d := jsontext.NewDecoder(in, append([]jsontext.Options{jsontext.AllowDuplicateNames(true)}, opts...)...)
+	var token, pointer, closer string
+	var keys []string
 	var last jsontext.Kind
 	var text string
 	var err error
+	var keyStack [][]string
 	for {
 		var t jsontext.Token
 		t, err = d.ReadToken()
 		if err != nil {
 			break
 		}
+		depth := d.StackDepth()
+		switch t.Kind() {
+		case '{', '[':
+			keyStack = append(keyStack, nil)
+		case '}', ']':
+			keyStack = keyStack[:depth]
+		case '"':
+			if kind, count := d.StackIndex(depth); kind == '{' && count%2 == 1 {
+				keyStack[depth-1] = append(keyStack[depth-1], t.String())
+			}
+		}
 		last, text = t.Kind(), t.String()
 	}
 
-	start = int(relaxed.inOffset)
+	start := int(in.inOffset)
 	tail := d.UnreadBuffer()
-	atToken := relaxed.inOffset > relaxed.triviaEnd
+	atToken := in.inOffset > in.triviaEnd
 	active := false
 	switch last {
 	case '"', '0', 'n', 't', 'f':
 		active = len(tail) == 0 && atToken
 		if active {
 			token = text
-			start = int(relaxed.lastStart)
+			start = int(in.lastStart)
 		}
 	}
 	rest := bytes.TrimLeft(tail, " \t\r\n")
@@ -57,14 +88,14 @@ func GetLastToken(input io.Reader) (token, pointer, closer string, start int, va
 	if atToken && errors.Is(err, io.ErrUnexpectedEOF) && len(rest) > 0 {
 		switch {
 		case rest[0] == '"':
-			start = int(relaxed.lastStart)
+			start = int(in.lastStart)
 			token = string(rest[1:])
 			if decoded, err := jsontext.AppendUnquote(nil, string(rest)+`"`); err == nil {
 				token = string(decoded)
 			}
-			closer = string(relaxed.last)
+			closer = string(in.last)
 		case rest[0] == '-' || rest[0] >= '0' && rest[0] <= '9':
-			start = int(relaxed.lastStart)
+			start = int(in.lastStart)
 			token = string(rest)
 		}
 	}
@@ -76,8 +107,13 @@ func GetLastToken(input io.Reader) (token, pointer, closer string, start int, va
 	if count > 0 {
 		base = path.Parent()
 	}
+	var value bool
 	switch kind {
 	case '{':
+		keys = keyStack[depth-1]
+		if active && count%2 == 1 {
+			keys = keys[:len(keys)-1]
+		}
 		value = count%2 == 1 && colon || count%2 == 0 && active
 		if value {
 			pointer = string(path)
@@ -104,117 +140,120 @@ func GetLastToken(input io.Reader) (token, pointer, closer string, start int, va
 		}
 	}
 	closer = string(closing)
-	if relaxed.inComment {
+	switch in.wrap {
+	case '{':
+		closer = strings.TrimSuffix(closer, "}")
+	case '[':
+		closer = strings.TrimSuffix(closer, "]")
+	}
+	if in.inComment {
 		start = -1
 	}
-	return token, pointer, closer, start, value
+	return Completion{Token: token, Pointer: pointer, Closer: closer, Start: start, Value: value, Keys: keys, Wrap: in.wrap}
 }
 
-// CompletionFunc adds matching replacements and their descriptions to completions.
-// pointer is the completion position as a JSON Pointer; prefix is unquoted.
-type CompletionFunc func(pointer, prefix string, completions map[string]string)
-
-// StructCompletion completes exported JSON field names using help tags as
-// descriptions. s may be a struct, a pointer to one (including nil), or its
-// reflect.Type. JSON names, ignored fields, and embedded structs are respected.
-// An empty pointer completes the struct's own fields; otherwise the pointer must
-// end in an empty component and may traverse structs, arrays, slices, and maps.
-// Replacements are complete relaxed JSON strings, without a following colon.
-func StructCompletion(s any) CompletionFunc {
+// Complete adds matching relaxed JSON replacements and descriptions to completions.
+// s may be a value, a pointer to one (including nil), or its reflect.Type.
+// Value selects between value suggestions and exported JSON field names.
+// Field names respect JSON tags and embedded structs, exclude Keys, and include
+// a following colon. Struct fields use help tags as descriptions; other suggestions
+// use their JSON Pointer. Comments and completed documents produce no suggestions.
+func (c Completion) Complete(s any, completions map[string]string) {
+	if completions == nil || c.Start < 0 {
+		return
+	}
 	root := completionRoot(s)
-	return func(pointer, prefix string, completions map[string]string) {
-		if completions == nil {
+	if c.Value {
+		c.completeValue(root, completions)
+	} else if c.Pointer != "" {
+		c.completeFields(root, completions)
+	}
+}
+
+func (c Completion) completeFields(root reflect.Type, completions map[string]string) {
+	p := jsontext.Pointer(c.Pointer)
+	if c.Pointer != "" {
+		if !p.IsValid() || !strings.HasSuffix(c.Pointer, "/") {
 			return
 		}
-		p := jsontext.Pointer(pointer)
-		if pointer != "" {
-			if !p.IsValid() || !strings.HasSuffix(pointer, "/") {
-				return
-			}
-			p = p.Parent()
+		p = p.Parent()
+	}
+	t := completionType(completionAt(root, p))
+	if t == nil || t.Kind() != reflect.Struct {
+		return
+	}
+	for name, field := range completionFields(t) {
+		if field.ambiguous || !strings.HasPrefix(name, c.Token) || slices.Contains(c.Keys, name) {
+			continue
 		}
-		t := completionType(completionAt(root, p))
-		if t == nil || t.Kind() != reflect.Struct {
-			return
-		}
-		for name, field := range completionFields(t) {
-			if field.ambiguous || !strings.HasPrefix(name, prefix) {
-				continue
-			}
-			if encoded, err := Marshal(name); err == nil {
-				completions[string(encoded)] = field.help
-			}
+		if encoded, err := Marshal(name); err == nil {
+			completions[string(encoded)+":"] = field.help
 		}
 	}
 }
 
-// ValueCompletion completes values at a JSON Pointer using their Go type.
-// It suggests container openers, boolean literals, string placeholders, zero
-// numbers, and null for nullable types. Empty interfaces accept every JSON value kind.
-// String values always suggest _STRING_ and an empty replacement, regardless of
-// prefix, to prevent the shell from falling back to unrelated completions.
-// Each suggestion's description is its JSON Pointer.
-// Byte arrays and text-unmarshaled types use an opening quote when an empty
-// string may not be a valid value. prefix is the unquoted token being replaced.
-// s accepts the same value and reflect.Type forms as StructCompletion.
-func ValueCompletion(s any) CompletionFunc {
-	root := completionRoot(s)
-	return func(pointer, prefix string, completions map[string]string) {
-		if completions == nil {
-			return
-		}
-		t := completionAt(root, jsontext.Pointer(pointer))
-		if t == nil {
-			return
-		}
-		nullable := t.Kind() == reflect.Pointer
-		t = completionType(t)
-		nullable = nullable || t.Kind() == reflect.Map || t.Kind() == reflect.Slice || t.Kind() == reflect.Interface
-		var candidates []string
-		switch {
-		case reflect.PointerTo(t).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()):
-			candidates = []string{`"`}
+func (c Completion) completeValue(root reflect.Type, completions map[string]string) {
+	t := completionAt(root, jsontext.Pointer(c.Pointer))
+	if t == nil {
+		return
+	}
+	nullable := t.Kind() == reflect.Pointer
+	t = completionType(t)
+	nullable = nullable || t.Kind() == reflect.Map || t.Kind() == reflect.Slice || t.Kind() == reflect.Interface
+	var candidates []string
+	switch {
+	case reflect.PointerTo(t).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()):
+		candidates = []string{`"`}
+	default:
+		switch t.Kind() {
+		case reflect.Struct:
+			candidates = []string{"{}"}
+			fields := map[string]string{}
+			Completion{}.completeFields(t, fields)
+			for name, help := range fields {
+				candidate := "{" + name
+				if strings.HasPrefix(candidate, c.Token) {
+					completions[candidate] = help
+				}
+			}
+		case reflect.Map:
+			candidates = []string{"{}"}
+		case reflect.Array, reflect.Slice:
+			if t.Elem().Kind() == reflect.Uint8 {
+				if t.Kind() == reflect.Array && t.Len() != 0 {
+					candidates = []string{`"`}
+				} else {
+					candidates = []string{`""`}
+				}
+			} else {
+				candidates = []string{"["}
+			}
+		case reflect.Bool:
+			candidates = []string{jsontext.True.String(), jsontext.False.String()}
+		case reflect.String:
+			if c.Token == "" {
+				candidates = []string{"_", "string"}
+			} else {
+				candidates = []string{c.Token, c.Token + ","}
+			}
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+			reflect.Float32, reflect.Float64:
+			candidates = []string{"0", "1"}
+		case reflect.Interface:
+			if t.NumMethod() == 0 {
+				candidates = []string{"{}", "[", jsontext.True.String(), jsontext.False.String(), `""`, "0"}
+			}
 		default:
-			switch t.Kind() {
-			case reflect.Struct, reflect.Map:
-				candidates = []string{"{"}
-			case reflect.Array, reflect.Slice:
-				if t.Elem().Kind() == reflect.Uint8 {
-					if t.Kind() == reflect.Array && t.Len() != 0 {
-						candidates = []string{`"`}
-					} else {
-						candidates = []string{`""`}
-					}
-				} else {
-					candidates = []string{"["}
-				}
-			case reflect.Bool:
-				candidates = []string{"true", "false"}
-			case reflect.String:
-				if prefix == "" {
-					candidates = []string{"_", "string"}
-				} else {
-					candidates = []string{prefix, prefix+","}
-				}
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-				reflect.Float32, reflect.Float64:
-				candidates = []string{"0", "1"}
-			case reflect.Interface:
-				if t.NumMethod() == 0 {
-					candidates = []string{"{", "[", "true", "false", `""`, "0"}
-				}
-			default:
-				return
-			}
+			return
 		}
-		if nullable {
-			candidates = append(candidates, "null")
-		}
-		for _, candidate := range candidates {
-			if strings.HasPrefix(candidate, prefix) {
-				completions[candidate] = pointer
-			}
+	}
+	if nullable {
+		candidates = append(candidates, "null")
+	}
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate, c.Token) {
+			completions[candidate] = c.Pointer
 		}
 	}
 }

@@ -445,6 +445,11 @@ func argumentMax(argument Argument) int {
 // normalizeWords rejoins Bash's --flag, =, value tokens into one logical word.
 // CutPrefix records the part outside the cursor's replacement span so Reply can
 // remove it after AddPrefix restores the flag name.
+//
+// A trailing colon token stays in the parser input but is outside Bash's
+// replacement span. For example, server: arrives as ["server", ":"]. Keeping
+// both words lets JSON completion suggest ":{"; setting CutPrefix to ":" makes
+// Reply send only "{" to Bash, which already preserves the typed colon.
 func (s *Completion) normalizeWords() {
 	if s.Shell != shellBash {
 		return
@@ -469,6 +474,11 @@ func (s *Completion) normalizeWords() {
 			}
 		}
 		args = append(args, word)
+	}
+	if len(words) > 0 {
+		if last := words[len(words)-1]; last != "" && strings.Trim(last, ":") == "" {
+			s.CutPrefix += last
+		}
 	}
 	s.Words = args
 }

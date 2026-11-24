@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestGetLastToken(t *testing.T) {
+func TestMakeCompletion(t *testing.T) {
 	for _, tt := range []struct{ input, token, pointer, closer string }{
 		{``, "", "", ""},
 		{` `, "", "", ""},
@@ -68,15 +69,15 @@ func TestGetLastToken(t *testing.T) {
 		{`[1` + strings.Repeat(" ", 8192), "", "/1", "]"},
 	} {
 		t.Run(tt.input, func(t *testing.T) {
-			token, pointer, closer, _, _ := GetLastToken(strings.NewReader(tt.input))
-			if token != tt.token || pointer != tt.pointer || closer != tt.closer {
-				t.Fatalf("got (%q, %q, %q), want (%q, %q, %q)", token, pointer, closer, tt.token, tt.pointer, tt.closer)
+			got := MakeCompletion(NewRelaxedReader(strings.NewReader(tt.input)))
+			if got.Token != tt.token || got.Pointer != tt.pointer || got.Closer != tt.closer {
+				t.Fatalf("got (%q, %q, %q), want (%q, %q, %q)", got.Token, got.Pointer, got.Closer, tt.token, tt.pointer, tt.closer)
 			}
 		})
 	}
 }
 
-func TestGetLastTokenValuePosition(t *testing.T) {
+func TestMakeCompletionValuePosition(t *testing.T) {
 	for _, tt := range []struct {
 		input string
 		value bool
@@ -90,15 +91,15 @@ func TestGetLastTokenValuePosition(t *testing.T) {
 		{`[1 {} `, true}, {`[1 {}]`, false}, {`{name:1}`, false},
 	} {
 		t.Run(tt.input, func(t *testing.T) {
-			_, _, _, _, value := GetLastToken(strings.NewReader(tt.input))
-			if value != tt.value {
-				t.Fatalf("value position = %t, want %t", value, tt.value)
+			got := MakeCompletion(NewRelaxedReader(strings.NewReader(tt.input)))
+			if got.Value != tt.value {
+				t.Fatalf("value position = %t, want %t", got.Value, tt.value)
 			}
 		})
 	}
 }
 
-func TestGetLastTokenStart(t *testing.T) {
+func TestMakeCompletionStart(t *testing.T) {
 	for _, tt := range []struct{ input, source string }{
 		{``, ""},
 		{" \t\r\n", ""},
@@ -131,10 +132,10 @@ func TestGetLastTokenStart(t *testing.T) {
 		{`{name:'` + strings.Repeat("x", 8192), `'` + strings.Repeat("x", 8192)},
 	} {
 		t.Run(tt.input, func(t *testing.T) {
-			_, _, _, start, _ := GetLastToken(strings.NewReader(tt.input))
+			got := MakeCompletion(NewRelaxedReader(strings.NewReader(tt.input)))
 			want := len(tt.input) - len(tt.source)
-			if start != want {
-				t.Fatalf("token offset = %d, want %d for source spelling %q", start, want, tt.source)
+			if got.Start != want {
+				t.Fatalf("token offset = %d, want %d for source spelling %q", got.Start, want, tt.source)
 			}
 		})
 	}
@@ -144,15 +145,94 @@ func TestGetLastTokenStart(t *testing.T) {
 		`{a:1, # comment`, `{a:1, // comment`, `{a:1, /* unfinished`,
 	} {
 		t.Run(input, func(t *testing.T) {
-			_, _, _, start, _ := GetLastToken(strings.NewReader(input))
-			if start != -1 {
-				t.Fatalf("token offset inside a comment = %d, want -1", start)
+			got := MakeCompletion(NewRelaxedReader(strings.NewReader(input)))
+			if got.Start != -1 {
+				t.Fatalf("token offset inside a comment = %d, want -1", got.Start)
 			}
 		})
 	}
 }
 
-func TestStructCompletionTags(t *testing.T) {
+func TestMakeCompletionKeys(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		keys  []string
+	}{
+		{``, nil},
+		{`{`, nil},
+		{`{a`, nil},
+		{`{"a"`, nil},
+		{`{a:`, []string{"a"}},
+		{`{a:1`, []string{"a"}},
+		{`{a:1 a`, []string{"a"}},
+		{`{a:1 b`, []string{"a"}},
+		{`{a:1 b:`, []string{"a", "b"}},
+		{`{a:1 b:{`, nil},
+		{`{a:1 b:{c:2 `, []string{"c"}},
+		{`{a:1 b:{c:2} `, []string{"a", "b"}},
+		{`{a:1 b:[2 `, nil},
+		{`{a:1 b:[{c:2 `, []string{"c"}},
+		{`{a:1 b:[{c:2} {d:3 `, []string{"d"}},
+		{`{a:1 b:[] `, []string{"a", "b"}},
+		{`{"\u0061":1 'two words':2 n`, []string{"a", "two words"}},
+		{`{'':1 n`, []string{""}},
+		{`{a:1 /* b:2 */ n`, []string{"a"}},
+		{"{a:1 // b:2\nn", []string{"a"}},
+		{`{a:{x:1} a:{y`, nil},
+		{`{a:{x:1} a:{y:2 `, []string{"y"}},
+		{`{a:1}`, nil},
+		{`[{} `, nil},
+		{`[1 {b:2 `, []string{"b"}},
+		{`{a:"unfinished`, []string{"a"}},
+		{`{'unfinished`, nil},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			got := MakeCompletion(NewRelaxedReader(strings.NewReader(tt.input)))
+			if !slices.Equal(got.Keys, tt.keys) {
+				t.Fatalf("keys = %q, want %q", got.Keys, tt.keys)
+			}
+		})
+	}
+}
+
+func TestMakeCompletionWrap(t *testing.T) {
+	for _, tt := range []struct {
+		name, input string
+		wrap        byte
+		want        Completion
+	}{
+		{"unwrapped", `{a:1 b`, 0, Completion{Token: "b", Pointer: "/", Closer: "}", Start: 5, Keys: []string{"a"}}},
+		{"empty object", ``, '{', Completion{Pointer: "/", Wrap: '{'}},
+		{"object prefix", `na`, '{', Completion{Token: "na", Pointer: "/", Wrap: '{'}},
+		{"object value", `a:1`, '{', Completion{Token: "1", Pointer: "/a", Start: 2, Value: true, Keys: []string{"a"}, Wrap: '{'}},
+		{"nested object", `a:{b:1 `, '{', Completion{Pointer: "/a/", Closer: "}", Start: 7, Keys: []string{"b"}, Wrap: '{'}},
+		{"explicit object", `{a:1 b`, '{', Completion{Token: "b", Pointer: "/", Closer: "}", Start: 5, Keys: []string{"a"}}},
+		{"comment before explicit object", `/* { */ {a:1 b`, '{', Completion{Token: "b", Pointer: "/", Closer: "}", Start: 13, Keys: []string{"a"}}},
+		{"comment before implicit object", `/* { */ a:1 b`, '{', Completion{Token: "b", Pointer: "/", Start: 12, Keys: []string{"a"}, Wrap: '{'}},
+		{"comment only", `/* done */`, '{', Completion{Pointer: "/", Start: 10, Wrap: '{'}},
+		{"active comment", `# note`, '{', Completion{Pointer: "/", Start: -1, Wrap: '{'}},
+		{"unfinished key", `'na`, '{', Completion{Token: "na", Pointer: "/", Closer: "'", Wrap: '{'}},
+		{"completed object", `{}`, '{', Completion{Start: 2}},
+		{"empty array", ``, '[', Completion{Pointer: "/0", Value: true, Wrap: '['}},
+		{"array values", `1 2`, '[', Completion{Token: "2", Pointer: "/1", Start: 2, Value: true, Wrap: '['}},
+		{"nested array", `[1`, '[', Completion{Token: "1", Pointer: "/0/0", Closer: "]", Start: 1, Value: true, Wrap: '['}},
+		{"array wrapping stays unconditional", `[1]`, '[', Completion{Pointer: "/1", Start: 3, Value: true, Wrap: '['}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := NewRelaxedReader(strings.NewReader(tt.input))
+			reader.Wrap(tt.wrap)
+			got := MakeCompletion(reader)
+			if len(got.Keys) == 0 {
+				got.Keys = nil
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("MakeCompletion = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompletionFieldsTags(t *testing.T) {
 	type Embedded struct {
 		Promoted int `json:"promoted" help:"Embedded field"`
 	}
@@ -172,32 +252,29 @@ func TestStructCompletionTags(t *testing.T) {
 		private  string
 	}
 	want := map[string]string{
-		"promoted":    "Direct field",
-		"enabled":     "Enable the service",
-		"name":        "Service name",
-		"Count":       "",
-		`"two words"`: "Quoted name",
-		`"true"`:      "Reserved name",
-		`"a,b"`:       "Comma in name",
+		"promoted:":    "Direct field",
+		"enabled:":     "Enable the service",
+		"name:":        "Service name",
+		"Count:":       "",
+		`"two words":`: "Quoted name",
+		`"true":`:      "Reserved name",
+		`"a,b":`:       "Comma in name",
 	}
 	for _, s := range []any{config{}, (*config)(nil), reflect.TypeFor[config]()} {
-		handler := StructCompletion(s)
-		for _, pointer := range []string{"", "/"} {
-			got := map[string]string{}
-			handler(pointer, "", got)
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("%T at %q: got %v, want %v", s, pointer, got, want)
-			}
+		got := map[string]string{}
+		Completion{Pointer: "/"}.Complete(s, got)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%T: got %v, want %v", s, got, want)
 		}
-		got := map[string]string{"existing": "Keep this entry"}
-		handler("/", "na", got)
-		if want := map[string]string{"existing": "Keep this entry", "name": "Service name"}; !reflect.DeepEqual(got, want) {
+		got = map[string]string{"existing": "Keep this entry"}
+		Completion{Pointer: "/", Token: "na"}.Complete(s, got)
+		if want := map[string]string{"existing": "Keep this entry", "name:": "Service name"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("prefix completion = %v, want %v", got, want)
 		}
 	}
 }
 
-func TestStructCompletionPointers(t *testing.T) {
+func TestCompletionFieldsPointers(t *testing.T) {
 	type server struct {
 		Host string `json:"host" help:"Server host"`
 	}
@@ -213,7 +290,6 @@ func TestStructCompletionPointers(t *testing.T) {
 		Escaped server             `json:"a/b~c"`
 		Node    *node              `json:"node"`
 	}
-	handler := StructCompletion((*config)(nil))
 	for _, tt := range []struct{ pointer, prefix, completion, description string }{
 		{"/server/", "ho", "host", "Server host"},
 		{"/servers/3/", "ho", "host", "Server host"},
@@ -230,9 +306,9 @@ func TestStructCompletionPointers(t *testing.T) {
 	} {
 		t.Run(tt.pointer+tt.prefix, func(t *testing.T) {
 			got, want := map[string]string{}, map[string]string{}
-			handler(tt.pointer, tt.prefix, got)
+			Completion{Pointer: tt.pointer, Token: tt.prefix}.Complete((*config)(nil), got)
 			if tt.completion != "" {
-				want[tt.completion] = tt.description
+				want[tt.completion+":"] = tt.description
 			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("got %v, want %v", got, want)
@@ -241,15 +317,15 @@ func TestStructCompletionPointers(t *testing.T) {
 	}
 	for _, s := range []any{nil, 42, []string{}} {
 		got := map[string]string{}
-		StructCompletion(s)("", "", got)
+		Completion{Pointer: "/"}.Complete(s, got)
 		if len(got) != 0 {
 			t.Fatalf("non-struct %T completed to %v", s, got)
 		}
 	}
-	handler("/", "", nil)
+	Completion{Pointer: "/"}.Complete((*config)(nil), nil)
 }
 
-func TestValueCompletion(t *testing.T) {
+func TestCompletionValues(t *testing.T) {
 	type config struct {
 		Map     map[string]map[string]int `json:"map"`
 		Pointer *bool                     `json:"pointer"`
@@ -263,18 +339,18 @@ func TestValueCompletion(t *testing.T) {
 		root                  any
 		want                  []string
 	}{
-		{name: "map field", root: config{}, pointer: "/map", want: []string{"{", "null"}},
-		{name: "nested map", root: (*config)(nil), pointer: "/map/primary", want: []string{"{", "null"}},
-		{name: "empty map key", root: reflect.TypeFor[config](), pointer: "/map/", want: []string{"{", "null"}},
+		{name: "map field", root: config{}, pointer: "/map", want: []string{"{}", "null"}},
+		{name: "nested map", root: (*config)(nil), pointer: "/map/primary", want: []string{"{}", "null"}},
+		{name: "empty map key", root: reflect.TypeFor[config](), pointer: "/map/", want: []string{"{}", "null"}},
 		{name: "pointer", root: config{}, pointer: "/pointer", want: []string{"true", "false", "null"}},
 		{name: "array", root: config{}, pointer: "/servers", want: []string{"["}},
-		{name: "array element", root: config{}, pointer: "/servers/0", want: []string{"{", "null"}},
+		{name: "array element", root: config{}, pointer: "/servers/0", want: []string{"{}", "null"}},
 		{name: "slice", root: config{}, pointer: "/slice", want: []string{"[", "null"}},
 		{name: "slice element", root: config{}, pointer: "/slice/3", want: []string{"true", "false"}},
 		{name: "escaped name", root: config{}, pointer: "/a~1b~0c", want: []string{"true", "false"}},
 		{name: "empty field name", root: config{}, pointer: "/", want: []string{"0", "1"}},
-		{name: "root struct", root: config{}, want: []string{"{"}},
-		{name: "root map", root: map[int]string{}, want: []string{"{", "null"}},
+		{name: "empty struct", root: struct{}{}, want: []string{"{}"}},
+		{name: "root map", root: map[int]string{}, want: []string{"{}", "null"}},
 		{name: "boolean prefix", root: true, prefix: "t", want: []string{"true"}},
 		{name: "null prefix", root: config{}, pointer: "/map", prefix: "nu", want: []string{"null"}},
 		{name: "string", root: "", want: []string{"_", "string"}},
@@ -288,7 +364,7 @@ func TestValueCompletion(t *testing.T) {
 		{name: "empty byte array", root: [0]byte{}, want: []string{`""`}},
 		{name: "text value", root: time.Time{}, want: []string{`"`}},
 		{name: "text pointer", root: (*time.Time)(nil), want: []string{`"`, "null"}},
-		{name: "any", root: reflect.TypeFor[any](), want: []string{"{", "[", "true", "false", `""`, "0", "null"}},
+		{name: "any", root: reflect.TypeFor[any](), want: []string{"{}", "[", "true", "false", `""`, "0", "null"}},
 		{name: "unsupported", root: make(chan int)},
 		{name: "nil"},
 		{name: "unknown field", root: config{}, pointer: "/missing"},
@@ -301,17 +377,86 @@ func TestValueCompletion(t *testing.T) {
 			for _, value := range tt.want {
 				want[value] = tt.pointer
 			}
-			handler := ValueCompletion(tt.root)
-			handler(tt.pointer, tt.prefix, got)
+			completion := Completion{Pointer: tt.pointer, Token: tt.prefix, Value: true}
+			completion.Complete(tt.root, got)
 			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("ValueCompletion = %v, want %v", got, want)
+				t.Fatalf("Complete = %v, want %v", got, want)
 			}
-			handler(tt.pointer, tt.prefix, nil)
+			completion.Complete(tt.root, nil)
 		})
 	}
 }
 
-func FuzzGetLastToken(f *testing.F) {
+func TestCompletionValuesStruct(t *testing.T) {
+	type server struct {
+		Host   string `json:"host" help:"Server host"`
+		True   string `json:"true"`
+		Hidden string `json:"-"`
+	}
+	type config struct {
+		Server  *server           `json:"server"`
+		Servers []server          `json:"servers"`
+		ByName  map[string]server `json:"by_name"`
+	}
+	for _, tt := range []struct {
+		name, pointer, prefix string
+		root                  any
+		nullable              bool
+	}{
+		{name: "root", root: server{}},
+		{name: "root pointer", root: (*server)(nil), nullable: true},
+		{name: "nested pointer", root: reflect.TypeFor[config](), pointer: "/server", nullable: true},
+		{name: "slice element", root: config{}, pointer: "/servers/0"},
+		{name: "map value", root: config{}, pointer: "/by_name/primary"},
+		{name: "field prefix", root: server{}, prefix: "{ho"},
+		{name: "null prefix", root: (*server)(nil), prefix: "nu", nullable: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			want := map[string]string{"{}": tt.pointer, "{host:": "Server host", `{"true":`: ""}
+			if tt.nullable {
+				want["null"] = tt.pointer
+			}
+			for candidate := range want {
+				if !strings.HasPrefix(candidate, tt.prefix) {
+					delete(want, candidate)
+				}
+			}
+			got := map[string]string{}
+			Completion{Pointer: tt.pointer, Token: tt.prefix, Value: true}.Complete(tt.root, got)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("Complete = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestCompletionComplete(t *testing.T) {
+	type config struct {
+		Enabled bool `json:"enabled" help:"Enable service"`
+	}
+	for _, tt := range []struct {
+		input string
+		want  map[string]string
+	}{
+		{"", map[string]string{"{}": "", "{enabled:": "Enable service"}},
+		{"{", map[string]string{"enabled:": "Enable service"}},
+		{"{enabled:", map[string]string{"true": "/enabled", "false": "/enabled"}},
+		{"{enabled:true ", map[string]string{}},
+		{"{enabled:true}", map[string]string{}},
+		{"{/* unfinished", map[string]string{}},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			completion := MakeCompletion(NewRelaxedReader(strings.NewReader(tt.input)))
+			got := map[string]string{}
+			completion.Complete(config{}, got)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("Complete = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func FuzzMakeCompletion(f *testing.F) {
 	for _, seed := range []string{
 		``, `{a:[0 `, `{'a/b~c': ['partial`, `{"a":"\u12`, `[1 2e-`, `{a:1 a`, `[1 ?`,
 		`{name:"x"en`, `{name:'x'/* done */en`, `{a:1 # comment`, `{a:1, /* unfinished`,
@@ -320,15 +465,19 @@ func FuzzGetLastToken(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, input []byte) {
 		original := bytes.Clone(input)
-		_, pointer, _, start, _ := GetLastToken(bytes.NewReader(input))
-		if !jsontext.Pointer(pointer).IsValid() {
-			t.Fatalf("invalid completion pointer %q for %q", pointer, input)
-		}
-		if start < -1 || start > len(input) {
-			t.Fatalf("invalid token offset %d for %q", start, input)
+		for _, wrap := range []byte{0, '{', '['} {
+			reader := NewRelaxedReader(bytes.NewReader(input))
+			reader.Wrap(wrap)
+			got := MakeCompletion(reader)
+			if !jsontext.Pointer(got.Pointer).IsValid() {
+				t.Fatalf("wrap %q: invalid completion pointer %q for %q", wrap, got.Pointer, input)
+			}
+			if got.Start < -1 || got.Start > len(input) {
+				t.Fatalf("wrap %q: invalid token offset %d for %q", wrap, got.Start, input)
+			}
 		}
 		if !bytes.Equal(input, original) {
-			t.Fatal("GetLastToken modified the input")
+			t.Fatal("MakeCompletion modified the input")
 		}
 	})
 }

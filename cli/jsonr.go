@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"reflect"
@@ -80,7 +79,8 @@ func (a *RelaxedJSONArguments[T]) Parse(args []string) ([]string, error) {
 }
 
 // Complete replaces the current shell argument using the preceding JSON words as
-// context. It accepts incomplete input without decoding it into Destination.
+// context. It omits struct keys already present in the current object and accepts
+// incomplete input without decoding it into Destination.
 func (a *RelaxedJSONArguments[T]) Complete(_ context.Context, c *Completion) {
 	args := c.Arguments
 	if len(args) == 0 {
@@ -88,44 +88,26 @@ func (a *RelaxedJSONArguments[T]) Complete(_ context.Context, c *Completion) {
 	}
 	prefix := c.Input
 	input := strings.Join(args, "\n")
-	wrapped := jsonrNeedsObjectWrap(input)
-	if wrapped {
-		input = "{" + input
-	}
-	token, pointer, closer, start, valuePosition := jsonr.GetLastToken(strings.NewReader(input))
-	if start < 0 {
+	reader := jsonr.NewRelaxedReader(strings.NewReader(input))
+	reader.Wrap('{')
+	comp := jsonr.MakeCompletion(reader)
+	if comp.Start < 0 {
 		return // The cursor is inside a comment.
 	}
-	start -= len(input) - len(prefix)
-	if start >= 0 {
+	offset := comp.Start - (len(input) - len(prefix))
+	if offset >= 0 {
 		completions := map[string]string{}
-		if valuePosition {
-			jsonr.ValueCompletion(reflect.TypeFor[T]())(pointer, token, completions)
-		} else if pointer != "" {
-			jsonr.StructCompletion(reflect.TypeFor[T]())(pointer, token, completions)
-		}
+		comp.Complete(reflect.TypeFor[T](), completions)
 		for replacement, help := range completions {
-			if !valuePosition {
-				replacement += ":"
-			}
-			c.Suggest(prefix[:start]+replacement, help)
+			c.Suggest(prefix[:offset]+replacement, help)
 		}
 	}
-	closing := closer
-	if wrapped {
-		closing = strings.TrimSuffix(closing, "}")
-	}
-	if closing != "" {
+	if comp.Closer != "" {
 		var value T
-		if err := jsonr.Unmarshal([]byte(input+closer), &value, a.Options...); err == nil {
-			c.Suggest(prefix+closing, "")
+		reader := jsonr.NewRelaxedReader(strings.NewReader(input + comp.Closer))
+		reader.Wrap(comp.Wrap)
+		if err := json.UnmarshalRead(reader, &value, a.Options...); err == nil {
+			c.Suggest(prefix+comp.Closer, "close")
 		}
 	}
-}
-
-// Inspect the first token so braces preceded by comments are recognized too.
-func jsonrNeedsObjectWrap(input string) bool {
-	reader := jsonr.NewRelaxedReader(strings.NewReader(input))
-	token, err := jsontext.NewDecoder(reader).ReadToken()
-	return err != nil || token.Kind() != '{'
 }

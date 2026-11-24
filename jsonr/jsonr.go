@@ -156,7 +156,8 @@ type RelaxedReader struct {
 	last byte
 	err  error
 	// Wrap input with "[]" or "{}".
-	wrap byte
+	wrap     byte
+	openWrap bool // Leave an implicit container open at EOF for completion.
 	// Shift from input to output at the start of last token.
 	lastShift int64
 	lastStart int64 // Source byte offset at the start of the last token.
@@ -180,11 +181,13 @@ func (r *RelaxedReader) Read(p []byte) (int, error) {
 			if r.outOffset == 0 && r.wrap != 0 {
 				r.emit(r.wrap)
 			}
-			switch r.wrap {
-			case '[':
-				r.emit(']')
-			case '{':
-				r.emit('}')
+			if !r.openWrap {
+				switch r.wrap {
+				case '[':
+					r.emit(']')
+				case '{':
+					r.emit('}')
+				}
 			}
 		}
 	}
