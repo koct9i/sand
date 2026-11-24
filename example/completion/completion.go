@@ -31,7 +31,8 @@ Examples:
   sand example completion --enabled=true --color=false --delay 5s
   sand example completion --fields=id,name
   sand example completion arguments staging 3 api worker
-  sand example completion json name:demo 'server:{host:localhost port:8080}'`,
+  sand example completion json name:demo 'server:{host:localhost port:8080}'
+  sand example completion json 'children:{api:{children:{worker:{enabled:true}}}}'`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name: "format", Aliases: []string{"f"}, Value: jsonFormat, Usage: "Example format value",
@@ -146,17 +147,18 @@ type serverConfig struct {
 }
 
 type serviceConfig struct {
-	Name    string       `json:"name" help:"Service name"`
-	Enabled bool         `json:"enabled" help:"Enable the service"`
-	Server  serverConfig `json:"server" help:"Server settings"`
-	Tags    []string     `json:"tags" help:"Service tags"`
+	Name     string                   `json:"name" help:"Service name"`
+	Enabled  bool                     `json:"enabled" help:"Enable the service"`
+	Server   serverConfig             `json:"server" help:"Server settings"`
+	Tags     []string                 `json:"tags" help:"Service tags"`
+	Children map[string]serviceConfig `json:"children,omitempty" help:"Nested services"`
 }
 
 func jsonCommand() *cli.Command {
 	var config serviceConfig
 	return &cli.Command{
 		Name:  "json",
-		Usage: "complete relaxed JSON fields, including nested server settings",
+		Usage: "complete relaxed JSON fields, including recursive service dictionaries",
 		Arguments: []cli.Argument{
 			&cli.RelaxedJSONArguments[serviceConfig]{
 				Name: "config", Max: -1, Destination: &config,

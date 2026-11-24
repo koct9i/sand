@@ -157,7 +157,8 @@ type RelaxedReader struct {
 	err  error
 	// Wrap input with "[]" or "{}".
 	wrap     byte
-	openWrap bool // Leave an implicit container open at EOF for completion.
+	openWrap bool   // Leave an implicit container open at EOF for completion.
+	rawToken []byte // Source spelling of the last token, recorded during completion.
 	// Shift from input to output at the start of last token.
 	lastShift int64
 	lastStart int64 // Source byte offset at the start of the last token.
@@ -274,6 +275,9 @@ func (r *RelaxedReader) fill() error {
 		return err
 	}
 	r.lastShift = startShift
+	if r.openWrap {
+		r.rawToken = append(r.rawToken[:0], c)
+	}
 	switch c {
 	case '{':
 		if r.outOffset == 0 && r.wrap == '{' {
@@ -299,6 +303,9 @@ func (r *RelaxedReader) fill() error {
 			r.buf = append(r.buf, next)
 		}
 		b := r.buf[2:]
+		if r.openWrap {
+			r.rawToken = append(r.rawToken, b[1:]...)
+		}
 		r.buf = r.buf[:0]
 		if isBareString(b) {
 			r.startString()
@@ -363,6 +370,9 @@ func (r *RelaxedReader) string(quote byte) error {
 		if err != nil {
 			return err
 		}
+		if r.openWrap {
+			r.rawToken = append(r.rawToken, c)
+		}
 		switch {
 		case c == quote:
 			r.emit('"')
@@ -372,6 +382,9 @@ func (r *RelaxedReader) string(quote byte) error {
 			if err != nil {
 				r.emit('\\')
 				return err
+			}
+			if r.openWrap {
+				r.rawToken = append(r.rawToken, next)
 			}
 			if quote == '\'' && next == '\'' {
 				r.emit('\'')

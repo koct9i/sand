@@ -79,35 +79,32 @@ func (a *RelaxedJSONArguments[T]) Parse(args []string) ([]string, error) {
 }
 
 // Complete replaces the current shell argument using the preceding JSON words as
-// context. It omits struct keys already present in the current object and accepts
+// context. It omits keys already present in the current object and accepts
 // incomplete input without decoding it into Destination.
 func (a *RelaxedJSONArguments[T]) Complete(_ context.Context, c *Completion) {
 	args := c.Arguments
 	if len(args) == 0 {
 		args = []string{c.Input}
 	}
-	prefix := c.Input
+	word := c.Input
 	input := strings.Join(args, "\n")
 	reader := jsonr.NewRelaxedReader(strings.NewReader(input))
 	reader.Wrap('{')
-	comp := jsonr.MakeCompletion(reader)
+	comp := jsonr.MakeCompletion(reader, a.Options...)
 	if comp.Start < 0 {
 		return // The cursor is inside a comment.
 	}
-	offset := comp.Start - (len(input) - len(prefix))
-	if offset >= 0 {
-		completions := map[string]string{}
-		comp.Complete(reflect.TypeFor[T](), completions)
-		for replacement, help := range completions {
-			c.Suggest(prefix[:offset]+replacement, help)
-		}
+	// Translate the token's byte offset from the full input to the current word.
+	// For "name:demo\nserver:{ho": wordStart=10, comp.Start=18, tokenOffset=8.
+	wordStart := len(input) - len(word)
+	tokenOffset := comp.Start - wordStart
+	if tokenOffset < 0 {
+		return // The token starts in an earlier shell word.
 	}
-	if comp.Closer != "" {
-		var value T
-		reader := jsonr.NewRelaxedReader(strings.NewReader(input + comp.Closer))
-		reader.Wrap(comp.Wrap)
-		if err := json.UnmarshalRead(reader, &value, a.Options...); err == nil {
-			c.Suggest(prefix+comp.Closer, "close")
-		}
+	prefix := word[:tokenOffset]
+	completions := map[string]string{}
+	comp.Complete(reflect.TypeFor[T](), completions)
+	for replacement, help := range completions {
+		c.Suggest(prefix+replacement, help)
 	}
 }

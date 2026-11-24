@@ -48,7 +48,26 @@ func TestCompletionExamples(t *testing.T) {
 		{"bash json object", "bash", []string{"json", "server", ":", ""}, map[string]string{"{}": "/server", "{host:": "Server host", "{port:": "Server port"}},
 		{"json boolean", "fish", []string{"json", "enabled:"}, map[string]string{"enabled:true": "/enabled", "enabled:false": "/enabled"}},
 		{"json slice", "fish", []string{"json", "tags:"}, map[string]string{"tags:[": "/tags", "tags:null": "/tags"}},
-		{"json closer", "fish", []string{"json", "server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host", "server:{host:localhost,": "/server/host", "server:{host:localhost}": "close"}},
+		{"finished json slice", "bash", []string{"json", "tags", ":", "[]"}, map[string]string{"[]": ""}},
+		{"json closer", "fish", []string{"json", "server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host", "server:{host:localhost}": "close"}},
+		{"recursive json dict", "fish", []string{"json", "children:"}, map[string]string{"children:{}": "/children", "children:null": "/children"}},
+		{"empty recursive json dict", "bash", []string{"json", "children", ":", "{"}, map[string]string{"{_:": "/children/_", "{string:": "/children/string", "{}": "close"}},
+		{"recursive json dict key", "bash", []string{"json", "children", ":", "{api"}, map[string]string{"{api:": "/children/api"}},
+		{"nested recursive json dict keys", "fish", []string{"json", "children:{api:{children:{"}, map[string]string{
+			"children:{api:{children:{_:":      "/children/api/children/_",
+			"children:{api:{children:{string:": "/children/api/children/string",
+			"children:{api:{children:{}}}":     "close",
+		}},
+		{"recursive json dict field", "fish", []string{"json", "children:{api:{", "ch"}, map[string]string{"children:": "Nested services"}},
+		{"recursive json field", "bash", []string{"json", "children:{api:{children:{worker:{", "en"}, map[string]string{"enabled:": "Enable the service"}},
+		{"recursive json value", "fish", []string{"json", "children:{api:{children:{worker:{enabled:"}, map[string]string{
+			"children:{api:{children:{worker:{enabled:true":  "/children/api/children/worker/enabled",
+			"children:{api:{children:{worker:{enabled:false": "/children/api/children/worker/enabled",
+		}},
+		{"recursive json closer", "fish", []string{"json", "children:{api:{children:{worker:{enabled:true"}, map[string]string{
+			"children:{api:{children:{worker:{enabled:true":     "/children/api/children/worker/enabled",
+			"children:{api:{children:{worker:{enabled:true}}}}": "close",
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := &cli.Command{
@@ -92,6 +111,19 @@ func TestExampleCommands(t *testing.T) {
 		{
 			name: "json", args: []string{"json", "name:demo", "enabled:true", "server:{host:localhost port:8080}"},
 			want: map[string]any{"name": "demo", "enabled": true, "server": map[string]any{"host": "localhost", "port": float64(8080)}},
+		},
+		{
+			name: "recursive json", args: []string{"json", "children:{api:{children:{worker:{enabled:true}}}}"},
+			want: map[string]any{"children": map[string]any{
+				"api": map[string]any{
+					"name": "", "enabled": false, "server": map[string]any{"host": "", "port": float64(0)}, "tags": []any{},
+					"children": map[string]any{
+						"worker": map[string]any{
+							"name": "", "enabled": true, "server": map[string]any{"host": "", "port": float64(0)}, "tags": []any{},
+						},
+					},
+				},
+			}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

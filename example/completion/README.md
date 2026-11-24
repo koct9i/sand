@@ -6,6 +6,17 @@ With `sand` on your `PATH`, load Bash completion with:
 source <(sand completion bash)
 ```
 
+For nested JSON such as `children:{api:{`, remove `:` from Bash's word breaks
+in the current shell:
+
+```bash
+COMP_WORDBREAKS=${COMP_WORDBREAKS//:}
+```
+
+With the default word breaks, Bash can skip the completion handler for nested
+unquoted braces. String-keyed dictionaries suggest `_:` and `string:`, or the
+key you have started followed by `:`, alongside their closing braces.
+
 Explore `sand example completion --help`, then press Tab after flag names or values.
 The command prints the selected values as JSON:
 
@@ -14,6 +25,7 @@ sand example completion --format json --port 8081 --delay 5s --size 2MiB --ratio
 sand example completion --enabled=true --color=false --tag blue,red --fields=id,name
 sand example completion arguments staging 3 api worker
 sand example completion json name:demo 'server:{host:localhost port:8080}'
+sand example completion json 'children:{api:{children:{worker:{enabled:true}}}}'
 ```
 
 - String, integer, boolean, duration, and floating-point flags suggest values.
@@ -24,6 +36,8 @@ sand example completion json name:demo 'server:{host:localhost port:8080}'
 - `arguments` completes a string, an integer, and any number of service names.
 - `json` completes field names and nested fields across multiple shell arguments.
   Keys already present in the current object are omitted.
+  Its `children` dictionary maps names to service configurations, each of which
+  can contain another `children` dictionary.
 
 To inspect suggestions directly without installing a shell script:
 
@@ -33,6 +47,7 @@ go run . completion --complete fish -- example completion --size "2M"
 go run . completion --complete bash -- example completion --fields = "id,n"
 go run . completion --complete bash -- example completion arguments staging 3 ""
 go run . completion --complete bash -- example completion json "server:{" "ho"
+go run . completion --complete bash -- example completion json "children:{api:{children:{worker:{" "en"
 ```
 
 Use `ValueCompletion.Suggestions`, available as `Suggestions` on flags and arguments,

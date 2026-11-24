@@ -80,7 +80,7 @@ func ExampleCompletion_Complete_values() {
 	completion := jsonr.MakeCompletion(jsonr.NewRelaxedReader(strings.NewReader(`{enabled:t`)))
 	completion.Complete(config{}, completions)
 	fmt.Println(completions)
-	// Output: map[true:/enabled]
+	// Output: map[true:/enabled t}:close]
 }
 
 func ExampleRelaxedReader_Wrap() {

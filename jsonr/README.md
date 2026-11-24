@@ -98,16 +98,29 @@ unexported fields, and follows pointers into nested structs, arrays, slices, and
 map values. Results map complete relaxed JSON field names to descriptions;
 quoted names stay quoted, and field names include a following colon. For example,
 a field tagged `json:"name" help:"Service name"` produces
-`map["name:"] = "Service name"`. Comments and completed documents produce no
-suggestions. Create the completion with `MakeCompletion(reader)`.
+`map["name:"] = "Service name"`. Comments produce no suggestions. Create the
+completion with `MakeCompletion(reader)`, which retains only the active token's
+original spelling.
+
+String-keyed maps suggest `_:` and `string:` for an empty key prefix, or the
+entered key followed by `:`. Existing keys are omitted and notes show each key's
+JSON Pointer. This keeps closing an empty map from being its only suggestion.
+
+After a completed object or array, `Complete` returns an empty replacement so
+the shell can finish the current word, alongside any remaining outer closers.
+It suggests closing quotes and containers with the description `close`,
+preserving the original token spelling. The initial parse records whether the
+innermost container or string can close, allowing all outer containers to close
+without parsing the input again or requiring it to match the suggested Go type.
+Optional `jsontext.Options` arguments to `MakeCompletion` configure parsing;
+duplicate names are allowed by default for completion.
 
 At value positions, `Complete` follows the full JSON Pointer and suggests `{}`
 for structs and maps, `{field:` for struct fields, `[` for arrays and slices,
 `true` and `false` for booleans, and `0` and `1` for numbers.
 Struct fields use `help` tags as descriptions; other suggestions use
 the JSON Pointer. Empty string prefixes offer `_` and `string`; nonempty string
-prefixes offer themselves with and without a trailing comma, preventing unrelated
-shell completions.
+prefixes offer themselves, preventing unrelated shell completions.
 Pointers, maps, slices, and interfaces also offer `null`; empty interfaces offer
 every JSON value kind. Byte slices use `""` for their base64 string representation,
 while nonempty byte arrays and text-unmarshaled types offer an opening `"`.
