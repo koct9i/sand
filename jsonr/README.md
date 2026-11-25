@@ -8,6 +8,9 @@ Decoding accepts standard JSON plus:
 - `//`, `/* ... */`, and `#` comments between tokens.
 - Optional commas between object members and array elements, and trailing commas.
 - Single-quoted strings, with JSON escapes and the additional `\'` escape.
+- Backslash-escaped structural punctuation (`\{`, `\}`, `\[`, `\]`, `\:`,
+  and `\,`) outside strings, for shell completion. Quoted strings keep their
+  usual JSON escape rules.
 - Bare strings matching `[A-Za-z_$][A-Za-z0-9_$]*`, as keys or values.
   `true`, `false`, and `null` retain their JSON meanings and require quotes
   when used as object keys or string values.
@@ -99,28 +102,30 @@ map values. Results map complete relaxed JSON field names to descriptions;
 quoted names stay quoted, and field names include a following colon. For example,
 a field tagged `json:"name" help:"Service name"` produces
 `map["name:"] = "Service name"`. Comments produce no suggestions. Create the
-completion with `MakeCompletion(reader)`, which retains only the active token's
-original spelling.
+completion with `MakeCompletion(reader)`.
 
-String-keyed maps suggest `_:` and `string:` for an empty key prefix, or the
+String-keyed maps suggest `_key_:` for an empty key prefix, or the
 entered key followed by `:`. Existing keys are omitted and notes show each key's
 JSON Pointer. This keeps closing an empty map from being its only suggestion.
 
 After a completed object or array, `Complete` returns an empty replacement so
 the shell can finish the current word, alongside any remaining outer closers.
-It suggests closing quotes and containers with the description `close`,
-preserving the original token spelling. The initial parse records whether the
-innermost container or string can close, allowing all outer containers to close
-without parsing the input again or requiring it to match the suggested Go type.
+It suggests remaining closing containers with the description `close` at a new
+token position or after another closing container. Active scalar and string
+prefixes receive value suggestions only: `{enabled:t` suggests `true`, while
+`{enabled:true ` can suggest `}`. The initial parse records whether the innermost
+container can close, allowing all outer containers to close without parsing the
+input again or requiring it to match the suggested Go type.
 Optional `jsontext.Options` arguments to `MakeCompletion` configure parsing;
 duplicate names are allowed by default for completion.
 
 At value positions, `Complete` follows the full JSON Pointer and suggests `{}`
 for structs and maps, `{field:` for struct fields, `[` for arrays and slices,
-`true` and `false` for booleans, and `0` and `1` for numbers.
+`true` and `false` for booleans, and `0` for numbers.
 Struct fields use `help` tags as descriptions; other suggestions use
-the JSON Pointer. Empty string prefixes offer `_` and `string`; nonempty string
-prefixes offer themselves, preventing unrelated shell completions.
+the JSON Pointer. Empty value prefixes offer an empty replacement alongside
+`_str_` for strings or `0` for numbers. Nonempty string and number prefixes offer
+themselves, preventing unrelated shell completions.
 Pointers, maps, slices, and interfaces also offer `null`; empty interfaces offer
 every JSON value kind. Byte slices use `""` for their base64 string representation,
 while nonempty byte arrays and text-unmarshaled types offer an opening `"`.

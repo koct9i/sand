@@ -33,9 +33,7 @@ type Completion struct {
 	Keys []string
 	// Wrap is the implicit outer container ('{' or '['), or zero when disabled.
 	Wrap byte
-	// rawToken preserves the active token's source spelling, including quotes and escapes.
-	rawToken string
-	// canClose reports whether the initial parse permits appending Closer at EOF.
+	// canClose reports whether the cursor is at a token boundary that permits Closer.
 	canClose bool
 	// finished marks a completed object or array at the cursor so the shell can finish the word.
 	finished bool
@@ -103,7 +101,6 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 	if len(rest) > 0 && (rest[0] == ':' || rest[0] == ',') {
 		rest = bytes.TrimLeft(rest[1:], " \t\r\n")
 	}
-	var closeString bool
 	if atToken && errors.Is(err, io.ErrUnexpectedEOF) && len(rest) > 0 {
 		switch {
 		case rest[0] == '"':
@@ -111,7 +108,6 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 			token = string(rest[1:])
 			if decoded, err := jsontext.AppendUnquote(nil, string(rest)+`"`); err == nil {
 				token = string(decoded)
-				closeString = true
 			}
 			closer = string(in.last)
 		case rest[0] == '-' || rest[0] >= '0' && rest[0] <= '9':
@@ -124,10 +120,10 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 	path := d.StackPointer()
 	kind, count := d.StackIndex(depth)
 	// Closing the innermost container completes the value in every parent.
-	// Objects must have paired names and values; an unfinished string may
-	// complete a value, but cannot finish an object name or an escape.
-	canClose := len(rest) == 0 && (kind != '{' || count%2 == 0) ||
-		closeString && (kind != '{' || count%2 == 1)
+	// Only offer closers at a token boundary, so a value prefix such as "t"
+	// completes to "true" without competing with "t}". Objects need paired
+	// names and values before closing.
+	canClose := start == int(in.inOffset) && len(rest) == 0 && (kind != '{' || count%2 == 0)
 	canClose = canClose && in.err == io.EOF && !in.inComment &&
 		(err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF))
 	if in.wrap != 0 && depth > 0 {
@@ -180,13 +176,8 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 	if in.inComment {
 		start = -1
 	}
-	var rawToken string
-	if start == int(in.lastStart) && atToken {
-		rawToken = string(in.rawToken)
-	}
 	finished := in.err == io.EOF && atToken && len(tail) == 0 && (last == '}' || last == ']')
-	in.rawToken = nil
-	return Completion{Token: token, Pointer: pointer, Closer: closer, Start: start, Value: value, Keys: keys, Wrap: in.wrap, rawToken: rawToken, canClose: canClose, finished: finished}
+	return Completion{Token: token, Pointer: pointer, Closer: closer, Start: start, Value: value, Keys: keys, Wrap: in.wrap, canClose: canClose, finished: finished}
 }
 
 // Complete adds matching relaxed JSON replacements and descriptions to completions.
@@ -197,16 +188,16 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 // name followed by a colon. Struct fields use help tags as descriptions; other suggestions
 // use their JSON Pointer. A completed object or array returns an empty replacement
 // so shells can finish the current word, alongside any remaining outer closers.
-// Closing suggestions retain their source spelling and use "close" as the
-// description. MakeCompletion records whether closing is possible during its
-// initial parse; Complete does not parse the input again. Comments produce no
-// suggestions.
+// Closing suggestions use "close" as the description and appear only at a token
+// boundary or after a completed container, never while completing a scalar or
+// string. MakeCompletion records whether closing is possible during its initial
+// parse; Complete does not parse the input again. Comments produce no suggestions.
 func (c Completion) Complete(s any, completions map[string]string) {
 	if completions == nil || c.Start < 0 {
 		return
 	}
 	if c.canClose && c.Closer != "" {
-		completions[c.rawToken+c.Closer] = "close"
+		completions[c.Closer] = "close"
 	}
 	if c.finished {
 		completions[""] = ""
@@ -253,7 +244,7 @@ func (c Completion) completeFields(root reflect.Type, completions map[string]str
 		}
 		names := []string{c.Token}
 		if c.Token == "" {
-			names = []string{"_", "string"}
+			names = []string{"_key_"}
 		}
 		for _, name := range names {
 			suggest(name, string(p.AppendToken(name)))
@@ -301,14 +292,18 @@ func (c Completion) completeValue(root reflect.Type, completions map[string]stri
 			candidates = []string{jsontext.True.String(), jsontext.False.String()}
 		case reflect.String:
 			if c.Token == "" {
-				candidates = []string{"_", "string"}
+				candidates = []string{"", "_str_"}
 			} else {
 				candidates = []string{c.Token}
 			}
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 			reflect.Float32, reflect.Float64:
-			candidates = []string{"0", "1"}
+			if c.Token == "" {
+				candidates = []string{"", "0"}
+			} else {
+				candidates = []string{c.Token}
+			}
 		case reflect.Interface:
 			if t.NumMethod() == 0 {
 				candidates = []string{"{}", "[", jsontext.True.String(), jsontext.False.String(), `""`, "0"}
@@ -318,7 +313,7 @@ func (c Completion) completeValue(root reflect.Type, completions map[string]stri
 		}
 	}
 	if nullable {
-		candidates = append(candidates, "null")
+		candidates = append(candidates, jsontext.Null.String())
 	}
 	for _, candidate := range candidates {
 		if strings.HasPrefix(candidate, c.Token) {

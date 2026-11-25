@@ -4,6 +4,8 @@
 // optional and trailing commas in objects and arrays, single-quoted strings, and
 // bare strings matching [A-Za-z_$][A-Za-z0-9_$]*. The tokens true, false, and null
 // retain their JSON meanings; object names with those spellings require quotes.
+// Outside strings, structural punctuation ({}[]:,) may be backslash-escaped
+// for shell completion. The backslashes are discarded while reading tokens.
 // Single-quoted strings use JSON escapes and additionally allow \'. All other
 // JSON syntax and the validation and Go value semantics of encoding/json/v2
 // are preserved.
@@ -157,8 +159,7 @@ type RelaxedReader struct {
 	err  error
 	// Wrap input with "[]" or "{}".
 	wrap     byte
-	openWrap bool   // Leave an implicit container open at EOF for completion.
-	rawToken []byte // Source spelling of the last token, recorded during completion.
+	openWrap bool // Leave an implicit container open at EOF for completion.
 	// Shift from input to output at the start of last token.
 	lastShift int64
 	lastStart int64 // Source byte offset at the start of the last token.
@@ -234,12 +235,22 @@ func (r *RelaxedReader) emit(b ...byte) {
 	r.outOffset += int64(len(b))
 }
 
+// peek recognizes escaped punctuation without consuming either source byte.
 func (r *RelaxedReader) peek() (byte, error) {
 	b, err := r.in.Peek(1)
 	if err != nil {
 		return 0, err
 	}
-	return b[0], nil
+	c := b[0]
+	if c == '\\' {
+		if pair, err := r.in.Peek(2); err == nil {
+			switch pair[1] {
+			case '{', '}', '[', ']', ':', ',':
+				return pair[1], nil
+			}
+		}
+	}
+	return c, nil
 }
 
 func (r *RelaxedReader) readByte() (byte, error) {
@@ -270,13 +281,15 @@ func (r *RelaxedReader) fill() error {
 	}
 	startShift := r.outOffset - r.inOffset
 	r.lastStart = r.inOffset
-	c, err = r.readByte()
+	b, err := r.readByte()
 	if err != nil {
 		return err
 	}
 	r.lastShift = startShift
-	if r.openWrap {
-		r.rawToken = append(r.rawToken[:0], c)
+	if b != c {
+		// peek recognized escaped punctuation. Consume the punctuation too,
+		// counting both source bytes for offsets and completion replacements.
+		r.readByte() // already peeked
 	}
 	switch c {
 	case '{':
@@ -303,9 +316,6 @@ func (r *RelaxedReader) fill() error {
 			r.buf = append(r.buf, next)
 		}
 		b := r.buf[2:]
-		if r.openWrap {
-			r.rawToken = append(r.rawToken, b[1:]...)
-		}
 		r.buf = r.buf[:0]
 		if isBareString(b) {
 			r.startString()
@@ -370,9 +380,6 @@ func (r *RelaxedReader) string(quote byte) error {
 		if err != nil {
 			return err
 		}
-		if r.openWrap {
-			r.rawToken = append(r.rawToken, c)
-		}
 		switch {
 		case c == quote:
 			r.emit('"')
@@ -382,9 +389,6 @@ func (r *RelaxedReader) string(quote byte) error {
 			if err != nil {
 				r.emit('\\')
 				return err
-			}
-			if r.openWrap {
-				r.rawToken = append(r.rawToken, next)
 			}
 			if quote == '\'' && next == '\'' {
 				r.emit('\'')

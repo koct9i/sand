@@ -419,6 +419,57 @@ func TestCompletionReplyPreservesSuggestions(t *testing.T) {
 	}
 }
 
+func TestCompletionReplyEscapesBashBraces(t *testing.T) {
+	for _, tt := range []struct {
+		name, value, addPrefix, cutPrefix, want string
+	}{
+		{name: "object", value: `{}`, want: `\{}`},
+		{name: "nested objects", value: `children:{api:{`, want: `children:\{api:\{`},
+		{name: "already escaped", value: `children:\{api:\{`, want: `children:\{api:\{`},
+		{name: "escaped backslash", value: `\\{`, want: `\\\{`},
+		{name: "double quoted", value: `name:"{"`, want: `name:"{"`},
+		{name: "single quoted", value: `name:'{'`, want: `name:'{'`},
+		{name: "escaped quote", value: `name:"a\"{"`, want: `name:"a\"{"`},
+		{name: "mixed quotes", value: `{name:'{'}`, want: `\{name:'{'}`},
+		{name: "other punctuation", value: `[]:},`, want: `[]:},`},
+		{name: "prefixes", value: `path/{`, addPrefix: "--output=", cutPrefix: "--output=path/", want: `\{`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			original := []Suggestion{{Text: tt.value, Note: "Value"}}
+			completion := &Completion{Shell: shellBash, AddPrefix: tt.addPrefix, CutPrefix: tt.cutPrefix, Output: slices.Clone(original)}
+			for range 2 {
+				var output strings.Builder
+				if err := completion.Reply(&output); err != nil {
+					t.Fatal(err)
+				}
+				if output.String() != tt.want+"\n" || !slices.Equal(completion.Output, original) {
+					t.Fatalf("Reply = %q, values = %v; want %q and %v", output.String(), completion.Output, tt.want+"\n", original)
+				}
+			}
+		})
+	}
+}
+
+func TestCompletionReplyBraceQuotingAcrossShells(t *testing.T) {
+	for _, tt := range []struct{ shell, want string }{
+		{"bash", "\\{host:\n"},
+		{"fish", "{host:\tServer host\n"},
+		{"zsh", "{host\\::Server host\n"},
+	} {
+		t.Run(tt.shell, func(t *testing.T) {
+			completion := &Completion{Shell: tt.shell}
+			completion.Suggest("{host:", "Server host")
+			var output strings.Builder
+			if err := completion.Reply(&output); err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != tt.want || !slices.Equal(completion.Output, []Suggestion{{Text: "{host:", Note: "Server host"}}) {
+				t.Fatalf("Reply = %q, values = %v; want %q and an unchanged candidate", output.String(), completion.Output, tt.want)
+			}
+		})
+	}
+}
+
 func TestCompletionPreservesCurrentForBashAmbiguity(t *testing.T) {
 	values := map[string]string{"a:x": "", "ab:x": ""}
 	complete := func(_ context.Context, completion *Completion) {

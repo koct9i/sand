@@ -149,18 +149,18 @@ func TestJSONRArgsCompletion(t *testing.T) {
 		{[]string{"byName:n"}, map[string]string{"byName:null": "/byName"}},
 		{[]string{"byName:{primary:"}, map[string]string{"byName:{primary:{}": "/byName/primary", "byName:{primary:{host:": "Server host", "byName:{primary:{ports:": "Listening ports"}},
 		{[]string{"byName:{'':"}, map[string]string{"byName:{'':{}": "/byName/", "byName:{'':{host:": "Server host", "byName:{'':{ports:": "Listening ports"}},
-		{[]string{"byName:{"}, map[string]string{"byName:{_:": "/byName/_", "byName:{string:": "/byName/string", "byName:{}": "close"}},
+		{[]string{"byName:{"}, map[string]string{"byName:{_key_:": "/byName/_key_", "byName:{}": "close"}},
 		{[]string{"byName:{primary"}, map[string]string{"byName:{primary:": "/byName/primary"}},
 		{[]string{"server:"}, map[string]string{"server:{}": "/server", "server:{host:": "Server host", "server:{ports:": "Listening ports"}},
 		{[]string{"server:", ""}, map[string]string{"{}": "/server", "{host:": "Server host", "{ports:": "Listening ports"}},
 		{[]string{"servers:"}, map[string]string{"servers:[": "/servers", "servers:null": "/servers"}},
 		{[]string{"servers:["}, map[string]string{"servers:[{}": "/servers/0", "servers:[{host:": "Server host", "servers:[{ports:": "Listening ports", "servers:[]": "close"}},
 		{[]string{"server:{ports:"}, map[string]string{"server:{ports:[": "/server/ports", "server:{ports:null": "/server/ports"}},
-		{[]string{"server:{ports:["}, map[string]string{"server:{ports:[0": "/server/ports/0", "server:{ports:[1": "/server/ports/0", "server:{ports:[]}": "close"}},
+		{[]string{"server:{ports:["}, map[string]string{"server:{ports:[": "/server/ports/0", "server:{ports:[0": "/server/ports/0", "server:{ports:[]}": "close"}},
 		{[]string{"enabled:"}, map[string]string{"enabled:true": "/enabled", "enabled:false": "/enabled"}},
 		{[]string{"enabled:t"}, map[string]string{"enabled:true": "/enabled"}},
 		{[]string{"enabled:f"}, map[string]string{"enabled:false": "/enabled"}},
-		{[]string{"name:"}, map[string]string{"name:_": "/name", "name:string": "/name"}},
+		{[]string{"name:"}, map[string]string{"name:": "/name", "name:_str_": "/name"}},
 		{[]string{"name:hello"}, map[string]string{"name:hello": "/name"}},
 		{[]string{"name:", "hello"}, map[string]string{"hello": "/name"}},
 		{[]string{"name:example en"}, map[string]string{"name:example enabled:": "Enable service"}},
@@ -168,6 +168,11 @@ func TestJSONRArgsCompletion(t *testing.T) {
 		{[]string{`name:'x'en`}, map[string]string{`name:'x'enabled:`: "Enable service"}},
 		{[]string{`name:'x'/* done */en`}, map[string]string{`name:'x'/* done */enabled:`: "Enable service"}},
 		{[]string{"server:{ho"}, map[string]string{"server:{host:": "Server host"}},
+		{[]string{`server\:\{ho`}, map[string]string{`server\:\{host:`: "Server host"}},
+		{[]string{"server", ":", `\{ho`}, map[string]string{`\{host:`: "Server host"}},
+		{[]string{`enabled\:`}, map[string]string{`enabled\:true`: "/enabled", `enabled\:false`: "/enabled"}},
+		{[]string{`server\:\{host\:a`}, map[string]string{`server\:\{host\:a`: "/server/host"}},
+		{[]string{`servers\:\[\]`}, map[string]string{`servers\:\[\]`: ""}},
 		{[]string{"server:{", "ho"}, map[string]string{"host:": "Server host"}},
 		{[]string{"server:{host:localhost", "ho"}, map[string]string{}},
 		{[]string{"server:{host:localhost", ""}, map[string]string{"ports:": "Listening ports", "}": "close"}},
@@ -185,8 +190,8 @@ func TestJSONRArgsCompletion(t *testing.T) {
 		{[]string{"'two w"}, map[string]string{"\"two words\":": "Quoted field"}},
 		{[]string{"/* comment */ na"}, map[string]string{"/* comment */ name:": "Service name"}},
 		{[]string{"name:example # comment", "en"}, map[string]string{"enabled:": "Enable service"}},
-		{[]string{"server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host", "server:{host:localhost}": "close"}},
-		{[]string{"name:'hel"}, map[string]string{"name:hel": "/name", "name:'hel'": "close"}},
+		{[]string{"server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host"}},
+		{[]string{"name:'hel"}, map[string]string{"name:hel": "/name"}},
 		{[]string{"# comment"}, map[string]string{}},
 		{[]string{"// comment"}, map[string]string{}},
 		{[]string{"name:example # comment"}, map[string]string{}},
@@ -210,6 +215,37 @@ func TestJSONRArgsCompletion(t *testing.T) {
 				t.Fatalf("Complete = %v, want %v; destination %#v", c.Output, tt.want, destination)
 			}
 		})
+	}
+}
+
+func TestJSONRBoolCompletionBoundary(t *testing.T) {
+	type config struct {
+		Value bool `json:"value"`
+	}
+	root := &cli.Command{
+		Name:      "configure",
+		Arguments: []cli.Argument{&cli.RelaxedJSONArguments[config]{Name: "config", Max: -1}},
+	}
+	for _, shell := range []string{"bash", "fish", "zsh"} {
+		for _, tt := range []struct {
+			words []string
+			want  map[string]string
+		}{
+			{[]string{"{value:t"}, map[string]string{"{value:true": "/value"}},
+			{[]string{"{value:true"}, map[string]string{"{value:true": "/value"}},
+			{[]string{"{value:true", ""}, map[string]string{"}": "close"}},
+		} {
+			t.Run(shell+"/"+strings.Join(tt.words, " "), func(t *testing.T) {
+				completion := cli.MakeCompletion(t.Context(), root, shell, tt.words, nil)
+				got := make(map[string]string, len(completion.Output))
+				for _, value := range completion.Output {
+					got[value.Text] = value.Note
+				}
+				if len(completion.Output) != len(tt.want) || !reflect.DeepEqual(got, tt.want) {
+					t.Fatalf("Complete = %v, want %v", completion.Output, tt.want)
+				}
+			})
+		}
 	}
 }
 
@@ -274,7 +310,7 @@ func TestJSONRArgsValueShellCompletion(t *testing.T) {
 	for _, tt := range []struct {
 		shell, input, want string
 	}{
-		{"bash", "byName:", "byName:null   (/byName)\nbyName:{}     (/byName)\n"},
+		{"bash", "byName:", "byName:null   (/byName)\nbyName:\\{}    (/byName)\n"},
 		{"fish", "byName:", "byName:null\t/byName\nbyName:{}\t/byName\n"},
 		{"zsh", "byName:", "byName\\:null:/byName\nbyName\\:{}:/byName\n"},
 		{"bash", "enabled:", "enabled:false   (/enabled)\nenabled:true    (/enabled)\n"},

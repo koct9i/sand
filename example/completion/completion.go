@@ -161,7 +161,8 @@ func jsonCommand() *cli.Command {
 		Usage: "complete relaxed JSON fields, including recursive service dictionaries",
 		Arguments: []cli.Argument{
 			&cli.RelaxedJSONArguments[serviceConfig]{
-				Name: "config", Max: -1, Destination: &config,
+				Name: "config", 
+				Destination: &config,
 				Options: []json.Options{json.RejectUnknownMembers(true)},
 			},
 		},

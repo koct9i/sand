@@ -6,16 +6,12 @@ With `sand` on your `PATH`, load Bash completion with:
 source <(sand completion bash)
 ```
 
-For nested JSON such as `children:{api:{`, remove `:` from Bash's word breaks
-in the current shell:
-
-```bash
-COMP_WORDBREAKS=${COMP_WORDBREAKS//:}
-```
-
-With the default word breaks, Bash can skip the completion handler for nested
-unquoted braces. String-keyed dictionaries suggest `_:` and `string:`, or the
-key you have started followed by `:`, alongside their closing braces.
+Bash suggestions escape unquoted opening braces as `\{` so nested JSON remains
+completable with the default word breaks. Existing escapes and quoted braces
+are preserved. Fish and Zsh quote their inserted candidates automatically.
+Manually typed, unescaped nested braces can still prevent Bash from invoking
+the handler. String-keyed dictionaries suggest `_key_:`, or the key
+you have started followed by `:`, alongside their closing braces.
 
 Explore `sand example completion --help`, then press Tab after flag names or values.
 The command prints the selected values as JSON:

@@ -91,7 +91,10 @@ func Main(ctx context.Context, args []string) (int, error) {
 			{
 				Name: "json",
 				Arguments: []cli.Argument{
-					&cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &config, Max: -1},
+					&cli.RelaxedJSONArguments[jsonrConfig]{
+						Name: "config", 
+						Destination: &config,
+					},
 				},
 			},
 			{

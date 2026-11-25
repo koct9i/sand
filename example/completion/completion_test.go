@@ -49,24 +49,27 @@ func TestCompletionExamples(t *testing.T) {
 		{"json boolean", "fish", []string{"json", "enabled:"}, map[string]string{"enabled:true": "/enabled", "enabled:false": "/enabled"}},
 		{"json slice", "fish", []string{"json", "tags:"}, map[string]string{"tags:[": "/tags", "tags:null": "/tags"}},
 		{"finished json slice", "bash", []string{"json", "tags", ":", "[]"}, map[string]string{"[]": ""}},
-		{"json closer", "fish", []string{"json", "server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host", "server:{host:localhost}": "close"}},
+		{"json string prefix", "fish", []string{"json", "server:{host:localhost"}, map[string]string{"server:{host:localhost": "/server/host"}},
 		{"recursive json dict", "fish", []string{"json", "children:"}, map[string]string{"children:{}": "/children", "children:null": "/children"}},
-		{"empty recursive json dict", "bash", []string{"json", "children", ":", "{"}, map[string]string{"{_:": "/children/_", "{string:": "/children/string", "{}": "close"}},
+		{"empty recursive json dict", "bash", []string{"json", "children", ":", "{"}, map[string]string{"{_key_:": "/children/_key_", "{}": "close"}},
 		{"recursive json dict key", "bash", []string{"json", "children", ":", "{api"}, map[string]string{"{api:": "/children/api"}},
 		{"nested recursive json dict keys", "fish", []string{"json", "children:{api:{children:{"}, map[string]string{
-			"children:{api:{children:{_:":      "/children/api/children/_",
-			"children:{api:{children:{string:": "/children/api/children/string",
-			"children:{api:{children:{}}}":     "close",
+			"children:{api:{children:{_key_:": "/children/api/children/_key_",
+			"children:{api:{children:{}}}":    "close",
 		}},
 		{"recursive json dict field", "fish", []string{"json", "children:{api:{", "ch"}, map[string]string{"children:": "Nested services"}},
 		{"recursive json field", "bash", []string{"json", "children:{api:{children:{worker:{", "en"}, map[string]string{"enabled:": "Enable the service"}},
+		{"escaped recursive json field", "bash", []string{"json", `children\:\{api\:\{children\:\{worker\:\{`, "en"}, map[string]string{"enabled:": "Enable the service"}},
+		{"escaped recursive word breaks", "bash", []string{"json", "children", ":", `\{api`, ":", `\{en`}, map[string]string{`\{enabled:`: "Enable the service"}},
 		{"recursive json value", "fish", []string{"json", "children:{api:{children:{worker:{enabled:"}, map[string]string{
 			"children:{api:{children:{worker:{enabled:true":  "/children/api/children/worker/enabled",
 			"children:{api:{children:{worker:{enabled:false": "/children/api/children/worker/enabled",
 		}},
-		{"recursive json closer", "fish", []string{"json", "children:{api:{children:{worker:{enabled:true"}, map[string]string{
-			"children:{api:{children:{worker:{enabled:true":     "/children/api/children/worker/enabled",
-			"children:{api:{children:{worker:{enabled:true}}}}": "close",
+		{"recursive json boolean prefix", "fish", []string{"json", "children:{api:{children:{worker:{enabled:t"}, map[string]string{
+			"children:{api:{children:{worker:{enabled:true": "/children/api/children/worker/enabled",
+		}},
+		{"recursive json closer at next word", "fish", []string{"json", "children:{api:{children:{worker:{enabled:true", ""}, map[string]string{
+			"children:": "Nested services", "name:": "Service name", "server:": "Server settings", "tags:": "Service tags", "}}}}": "close",
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

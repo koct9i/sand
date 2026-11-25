@@ -14,14 +14,11 @@ import (
 // Outer braces are optional. T describes the object; JSON field names and help
 // tags supply completion candidates and descriptions, including nested fields.
 // Value completion suggests literals and container openers using their Go types.
-// Like StringArgs, Max must be positive or -1 for unlimited arguments.
 type RelaxedJSONArguments[T any] struct {
 	Name        string         `json:"name"`
 	Value       T              `json:"value"`
 	Destination *T             `json:"-"`
 	UsageText   string         `json:"usageText"`
-	Min         int            `json:"minTimes"`
-	Max         int            `json:"maxTimes"`
 	Options     []json.Options `json:"-"`
 
 	value *T
@@ -37,7 +34,7 @@ func (a *RelaxedJSONArguments[T]) HasName(name string) bool {
 }
 
 func (a *RelaxedJSONArguments[T]) Usage() string {
-	return (&StringArgs{Name: a.Name, UsageText: a.UsageText, Min: a.Min, Max: a.Max}).Usage()
+	return (&StringArgs{Name: a.Name, UsageText: a.UsageText, Min: 1, Max: -1}).Usage()
 }
 
 func (a *RelaxedJSONArguments[T]) Get() any {
@@ -48,16 +45,7 @@ func (a *RelaxedJSONArguments[T]) Get() any {
 }
 
 func (a *RelaxedJSONArguments[T]) Parse(args []string) ([]string, error) {
-	if a.Max == 0 || a.Max < -1 || a.Min < 0 || a.Max != -1 && a.Min > a.Max {
-		return args, fmt.Errorf("argument %s has invalid limits: min %d, max %d", a.Name, a.Min, a.Max)
-	}
 	count := len(args)
-	if a.Max > 0 {
-		count = min(count, a.Max)
-	}
-	if count < a.Min {
-		return args, fmt.Errorf("insufficient arguments for %s: got %d, need %d", a.Name, count, a.Min)
-	}
 
 	// FIXME: Decode into an isolated copy of Value. This shallow copy shares maps,
 	// slices, and pointers with defaults and possibly Destination, so a failed

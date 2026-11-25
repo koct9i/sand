@@ -22,6 +22,8 @@ func TestUnmarshalRelaxed(t *testing.T) {
 		{"optional array commas", `[1 2,true false null bare 'x'"y" [] {} [3 4]]`, `[1,2,true,false,null,"bare","x","y",[],{},[3,4]]`},
 		{"optional object commas", `{a:1 b:[true false] c:{x:bare y:'text'} d:[] e:{} f:null}`, `{"a":1,"b":[true,false],"c":{"x":"bare","y":"text"},"d":[],"e":{},"f":null}`},
 		{"adjacent containers", `[{}[]{a:1}{b:2}[1][2]]`, `[{},[],{"a":1},{"b":2},[1],[2]]`},
+		{"escaped punctuation", `\{a\:\[1\,2\,\] b\:\{c\:true\}\}`, `{"a":[1,2],"b":{"c":true}}`},
+		{"escapes inside strings", `["\\:" '\\{' "\\}" '\\[' "\\]"]`, `["\\:","\\{","\\}","\\[","\\]"]`},
 		{"comments replacing commas", "[1/*comment*/2 //line\n3 #hash\n4]", `[1,2,3,4]`},
 		{"comments split bare tokens", `[tr/*comment*/ue 1/*comment*/e2]`, `["tr","ue",1,"e2"]`},
 		{"mixed separators", `{a:[1,2 3,] b:4,c:5}`, `{"a":[1,2,3],"b":4,"c":5}`},
@@ -67,6 +69,7 @@ func TestUnmarshalRejectsMalformedInput(t *testing.T) {
 		`{true:1}`, `{false:2}`, `{null:3}`,
 		`+1`, `.5`, `01`, `0x10`, `1e`,
 		`'\x41'`, `'\q'`, `"\'"`, "'line\nbreak'", "'line\\\nbreak'",
+		`\`, `\q`, `\\{}`, `"\:"`, `'\{'`, `\{a\:1`,
 		`{} {}`, `1 2`, `true false`, `[] garbage`, `{} /* unfinished`, `{} ,`,
 	} {
 		t.Run(input, func(t *testing.T) {
@@ -201,11 +204,14 @@ func TestRelaxedReaderWrap(t *testing.T) {
 		{"comments only", "/* empty */ // empty\n", `[]`, '['},
 		{"object comments only", "/* empty */ // empty\n", `{}`, '{'},
 		{"explicit empty object", `{}`, `{}`, '{'},
+		{"escaped explicit object", `\{a\:1\}`, `{"a":1}`, '{'},
+		{"escaped implicit object", `a\:1 b\:\{c\:true\}`, `{"a":1,"b":{"c":true}}`, '{'},
 		{"explicit object", `{a:1 b:[2 3]}`, `{"a":1,"b":[2,3]}`, '{'},
 		{"explicit object after whitespace", " \t\r\n{a:1}", `{"a":1}`, '{'},
 		{"explicit object after comments", "# config\n/* leading */ // note\n{a:1,} # done", `{"a":1}`, '{'},
 		{"brace inside leading comment", "/* { */ # {\na:1", `{"a":1}`, '{'},
 		{"array wrapping stays unconditional", `[1 2]`, `[[1,2]]`, '['},
+		{"escaped array wrapping", `\[1 2\]`, `[[1,2]]`, '['},
 		{"number at EOF", `42`, `[42]`, '['},
 		{"bare string at EOF", `bare`, `["bare"]`, '['},
 		{"literal at EOF", `true`, `[true]`, '['},
@@ -261,6 +267,13 @@ func TestRelaxedReaderTrivia(t *testing.T) {
 	}{
 		{"unwrapped", " \t\r\n/* note */ # note\n{a:1} \n", `{"a":1}`, 0},
 		{"between numbers", `[1/*xx*/2]`, `[1,2]`, 0},
+		{"escaped punctuation", `\{a\:\[1\,2\] b\:\{\}\}`, `{"a":[1,2],"b":{}}`, 0},
+		{"escaped adjacent containers", `\[1\{a\:2\}\[3\]\]`, `[1,{"a":2},[3]]`, 0},
+		{"escaped implicit object", `a\:true`, `{"a":true}`, '{'},
+		{"escaped trailing comma", `\{a\:1\,/* done */\}`, `{"a":1 }`, 0},
+		{"escaped trailing comma at EOF", `a\:1\,`, `{"a":1 }`, '{'},
+		{"escaped punctuation in strings", `["\\:" '\\{' "\\}" '\\[' "\\]"]`, `["\\:","\\{","\\}","\\[","\\]"]`, 0},
+		{"escaped punctuation in comments", `/* \{ \: */\{a\:1\}`, `{"a":1}`, 0},
 		{"between bare tokens", `[tr/*xx*/ue]`, `["tr","ue"]`, 0},
 		{"object separators", `{ /* note */ a /* note */ : [ 1 /* note */ 2 ] b : ' x y ' }`, `{"a":[1,2],"b":" x y "}`, 0},
 		{"implicit object", " // note\n a:1", `{"a":1}`, '{'},
@@ -313,6 +326,7 @@ func TestSourceErrorOffsets(t *testing.T) {
 		" \t\n", " \t/* leading 日本 */",
 		`{a:'a"b\'c',/* comment */bad:`,
 		`/* comment */{a:[1 2] b:{c:3 d:4} bad:`,
+		`\{a\:1 b\:\{c\:true\} bad\:`,
 	} {
 		t.Run(prefix, func(t *testing.T) {
 			for _, wrap := range []byte{0, '{', '['} {
@@ -328,6 +342,7 @@ func TestSourceErrorOffsets(t *testing.T) {
 	}
 	for _, input := range []string{
 		`[1 `, `[1 /* done */`, "{a: \n/* done */",
+		`\{a\:\{b\:1`,
 	} {
 		t.Run(input, func(t *testing.T) {
 			err := Unmarshal([]byte(input), new(any))
@@ -366,6 +381,7 @@ func FuzzRelaxedRoundTrip(f *testing.F) {
 {a:'it\'s fine',}`, `"text"`, `123`, `[{nested:{a:1,},},]`,
 		`{a:[1 2] b:[{}[]{x:bare y:true}]}`, "[1/*comment*/2 #hash\n3]",
 		`{"` + strings.Repeat("a", 256) + `":"` + strings.Repeat("b", 257) + `"}`,
+		`\{a\:\[1\,2\]\}`, `\[1\{a\:2\}\[3\]\]`,
 	} {
 		f.Add(seed)
 	}

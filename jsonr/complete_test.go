@@ -18,6 +18,9 @@ func TestMakeCompletion(t *testing.T) {
 		{`{`, "", "/", "}"},
 		{`{a`, "a", "/", "}"},
 		{`{a:`, "", "/a", "}"},
+		{`\{a\:`, "", "/a", "}"},
+		{`\{a\:\[0`, "0", "/a/0", "]}"},
+		{`\{a\:\{b`, "b", "/a/", "}}"},
 		{`{a:[ `, "", "/a/0", "]}"},
 		{`{a:[0`, "0", "/a/0", "]}"},
 		{`{a:[0 `, "", "/a/1", "]}"},
@@ -107,6 +110,9 @@ func TestMakeCompletionStart(t *testing.T) {
 		{`{`, ""},
 		{`{na`, "na"},
 		{`{name:`, ""},
+		{`\{a\:`, ""},
+		{`\{name\:he`, "he"},
+		{`\{name\:'it\'s`, `'it\'s`},
 		{`{name:""`, `""`},
 		{`{name:'it\'s`, `'it\'s`},
 		{`{name:"\u0068o`, `"\u0068o`},
@@ -208,6 +214,8 @@ func TestMakeCompletionWrap(t *testing.T) {
 		{"object value", `a:1`, '{', Completion{Token: "1", Pointer: "/a", Start: 2, Value: true, Keys: []string{"a"}, Wrap: '{'}},
 		{"nested object", `a:{b:1 `, '{', Completion{Pointer: "/a/", Closer: "}", Start: 7, Keys: []string{"b"}, Wrap: '{'}},
 		{"explicit object", `{a:1 b`, '{', Completion{Token: "b", Pointer: "/", Closer: "}", Start: 5, Keys: []string{"a"}}},
+		{"escaped explicit object", `\{a\:1 b`, '{', Completion{Token: "b", Pointer: "/", Closer: "}", Start: 7, Keys: []string{"a"}}},
+		{"escaped object value", `a\:1`, '{', Completion{Token: "1", Pointer: "/a", Start: 3, Value: true, Keys: []string{"a"}, Wrap: '{'}},
 		{"comment before explicit object", `/* { */ {a:1 b`, '{', Completion{Token: "b", Pointer: "/", Closer: "}", Start: 13, Keys: []string{"a"}}},
 		{"comment before implicit object", `/* { */ a:1 b`, '{', Completion{Token: "b", Pointer: "/", Start: 12, Keys: []string{"a"}, Wrap: '{'}},
 		{"comment only", `/* done */`, '{', Completion{Pointer: "/", Start: 10, Wrap: '{'}},
@@ -223,8 +231,7 @@ func TestMakeCompletionWrap(t *testing.T) {
 			reader := NewRelaxedReader(strings.NewReader(tt.input))
 			reader.Wrap(tt.wrap)
 			got := MakeCompletion(reader)
-			got.rawToken = "" // Compare the public parser state.
-			got.canClose = false
+			got.canClose = false // Compare the public parser state.
 			got.finished = false
 			if len(got.Keys) == 0 {
 				got.Keys = nil
@@ -337,13 +344,13 @@ func TestCompletionMapKeys(t *testing.T) {
 		input string
 		want  map[string]string
 	}{
-		{`children:{`, map[string]string{"_:": "/children/_", "string:": "/children/string", "}": "close"}},
+		{`children:{`, map[string]string{"_key_:": "/children/_key_", "}": "close"}},
 		{`children:{api`, map[string]string{"api:": "/children/api"}},
 		{`children:{'two words`, map[string]string{`"two words":`: "/children/two words"}},
 		{`children:{'a/b~c`, map[string]string{`"a/b~c":`: "/children/a~1b~0c"}},
-		{`children:{_:{} `, map[string]string{"string:": "/children/string", "}": "close"}},
+		{`children:{_key_:{} `, map[string]string{"}": "close"}},
 		{`children:{api:{} api`, map[string]string{}},
-		{`children:{api:{children:{`, map[string]string{"_:": "/children/api/children/_", "string:": "/children/api/children/string", "}}}": "close"}},
+		{`children:{api:{children:{`, map[string]string{"_key_:": "/children/api/children/_key_", "}}}": "close"}},
 	} {
 		t.Run(tt.input, func(t *testing.T) {
 			reader := NewRelaxedReader(strings.NewReader(tt.input))
@@ -381,17 +388,17 @@ func TestCompletionValues(t *testing.T) {
 		{name: "slice", root: config{}, pointer: "/slice", want: []string{"[", "null"}},
 		{name: "slice element", root: config{}, pointer: "/slice/3", want: []string{"true", "false"}},
 		{name: "escaped name", root: config{}, pointer: "/a~1b~0c", want: []string{"true", "false"}},
-		{name: "empty field name", root: config{}, pointer: "/", want: []string{"0", "1"}},
+		{name: "empty field name", root: config{}, pointer: "/", want: []string{"", "0"}},
 		{name: "empty struct", root: struct{}{}, want: []string{"{}"}},
 		{name: "root map", root: map[int]string{}, want: []string{"{}", "null"}},
 		{name: "boolean prefix", root: true, prefix: "t", want: []string{"true"}},
 		{name: "null prefix", root: config{}, pointer: "/map", prefix: "nu", want: []string{"null"}},
-		{name: "string", root: "", want: []string{"_", "string"}},
+		{name: "string", root: "", want: []string{"", "_str_"}},
 		{name: "string prefix", root: "", prefix: "hello", want: []string{"hello"}},
-		{name: "string pointer", root: (*string)(nil), want: []string{"_", "string", "null"}},
-		{name: "integer", root: 0, want: []string{"0", "1"}},
-		{name: "unsigned", root: uint64(0), want: []string{"0", "1"}},
-		{name: "float", root: float32(0), want: []string{"0", "1"}},
+		{name: "string pointer", root: (*string)(nil), want: []string{"", "_str_", "null"}},
+		{name: "integer", root: 0, want: []string{"", "0"}},
+		{name: "unsigned", root: uint64(0), want: []string{"", "0"}},
+		{name: "float", root: float32(0), want: []string{"", "0"}},
 		{name: "bytes", root: []byte{}, want: []string{`""`, "null"}},
 		{name: "byte array", root: [4]byte{}, want: []string{`"`}},
 		{name: "empty byte array", root: [0]byte{}, want: []string{`""`}},
@@ -474,6 +481,8 @@ func TestCompletionComplete(t *testing.T) {
 		{"", map[string]string{"{}": "", "{enabled:": "Enable service"}},
 		{"{", map[string]string{"enabled:": "Enable service", "}": "close"}},
 		{"{enabled:", map[string]string{"true": "/enabled", "false": "/enabled"}},
+		{"{enabled:t", map[string]string{"true": "/enabled"}},
+		{"{enabled:true", map[string]string{"true": "/enabled"}},
 		{"{enabled:true ", map[string]string{"}": "close"}},
 		{"{enabled:true}", map[string]string{"": ""}},
 		{"{/* unfinished", map[string]string{}},
@@ -513,20 +522,20 @@ func TestCompletionFinishAndClosers(t *testing.T) {
 		{name: "finished document", input: "{}", want: map[string]string{"": ""}},
 		{name: "finished nested object", input: "servers:[{}", wrap: '{', want: map[string]string{"": "", "]": "close"}},
 		{name: "finished nested array", input: "server:{ports:[]", wrap: '{', want: map[string]string{"": "", "}": "close"}},
-		{name: "string closer", input: "name:'hel", wrap: '{', want: map[string]string{"hel": "/name", "'hel'": "close"}},
-		{name: "escaped string closer", input: "name:'\\u0061", wrap: '{', want: map[string]string{"a": "/name", "'\\u0061'": "close"}},
-		{name: "nested closer", input: "server:{host:a", wrap: '{', want: map[string]string{"a": "/server/host", "a}": "close"}},
-		{name: "after trivia", input: "ports:[1 /* done */", wrap: '{', want: map[string]string{"0": "/ports/1", "1": "/ports/1", "]": "close"}},
-		{name: "wrong value type still closes", input: "{enabled:hello", want: map[string]string{"hello}": "close"}},
-		{name: "invalid number", input: "{ports:[-", want: map[string]string{}},
+		{name: "string prefix", input: "name:'hel", wrap: '{', want: map[string]string{"hel": "/name"}},
+		{name: "escaped string prefix", input: "name:'\\u0061", wrap: '{', want: map[string]string{"a": "/name"}},
+		{name: "nested value prefix", input: "server:{host:a", wrap: '{', want: map[string]string{"a": "/server/host"}},
+		{name: "after trivia", input: "ports:[1 /* done */", wrap: '{', want: map[string]string{"": "/ports/1", "0": "/ports/1", "]": "close"}},
+		{name: "wrong value prefix", input: "{enabled:hello", want: map[string]string{}},
+		{name: "unfinished number prefix", input: "{ports:[-", want: map[string]string{"-": "/ports/0"}},
 		{name: "missing value", input: "{enabled:", want: map[string]string{"true": "/enabled", "false": "/enabled"}},
 		{name: "unfinished key", input: "{name", want: map[string]string{"name:": ""}},
-		{name: "unknown allowed", input: "{unknown:1", want: map[string]string{"1}": "close"}},
-		{name: "semantic options do not restrict closers", input: "{unknown:1", opts: []json.Options{json.RejectUnknownMembers(true)}, want: map[string]string{"1}": "close"}},
-		{name: "duplicates allowed by default", input: "{name:a name:b", want: map[string]string{"b": "/name", "b}": "close"}},
-		{name: "duplicates allowed", input: "{name:a name:b", opts: []json.Options{jsontext.AllowDuplicateNames(true)}, want: map[string]string{"b": "/name", "b}": "close"}},
-		{name: "array wrapping", input: "[1", wrap: '[', root: reflect.TypeFor[[][]int](), want: map[string]string{"1": "/0/0", "1]": "close"}},
-		{name: "pointer root", input: "name:'hel", wrap: '{', root: (*config)(nil), want: map[string]string{"hel": "/name", "'hel'": "close"}},
+		{name: "unknown value prefix", input: "{unknown:1", want: map[string]string{}},
+		{name: "semantic options do not restrict closers", input: "{unknown:1 ", root: struct{}{}, opts: []json.Options{json.RejectUnknownMembers(true)}, want: map[string]string{"}": "close"}},
+		{name: "duplicates allowed by default", input: "{name:a name:b", want: map[string]string{"b": "/name"}},
+		{name: "duplicates allowed", input: "{name:a name:b", opts: []json.Options{jsontext.AllowDuplicateNames(true)}, want: map[string]string{"b": "/name"}},
+		{name: "array wrapping", input: "[1", wrap: '[', root: reflect.TypeFor[[][]int](), want: map[string]string{"1": "/0/0"}},
+		{name: "pointer root", input: "name:'hel", wrap: '{', root: (*config)(nil), want: map[string]string{"hel": "/name"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := NewRelaxedReader(strings.NewReader(tt.input))
@@ -545,7 +554,7 @@ func TestCompletionFinishAndClosers(t *testing.T) {
 	}
 }
 
-func TestCompletionClosability(t *testing.T) {
+func TestCompletionCloserBoundaries(t *testing.T) {
 	for _, tt := range []struct {
 		input string
 		wrap  byte
@@ -576,18 +585,28 @@ func TestCompletionClosability(t *testing.T) {
 		{input: `{a:[{b:`},
 		{input: `{a:[{} `, want: `]}`},
 		{input: `{a:[{}]`, want: `}`},
-		{input: `'`, want: `''`},
-		{input: `"root`, want: `"root"`},
-		{input: `{a:'`, want: `''}`},
-		{input: `{a:['x`, want: `'x']}`},
-		{input: `{a:['\u0061`, want: `'\u0061']}`},
-		{input: `{a:"\u0061"`, want: `"\u0061"}`},
-		{input: `{a:'it\'s'`, want: `'it\'s'}`},
-		{input: `{a:'a"b`, want: `'a"b'}`},
-		{input: `{a:1.00e+02`, want: `1.00e+02}`},
+		{input: `'`},
+		{input: `"root`},
+		{input: `{a:'`},
+		{input: `{a:['x`},
+		{input: `{a:['\u0061`},
+		{input: `{a:"\u0061"`},
+		{input: `{a:'it\'s'`},
+		{input: `{a:'a"b`},
+		{input: `{a:1.00e+02`},
+		{input: `{a:t`},
+		{input: `{a:true`},
+		{input: `{a:"}"`},
+		{input: `{a:"\u0061" `, want: `}`},
+		{input: `{a:true `, want: `}`},
+		{input: "{a:true\n", want: `}`},
+		{input: "{a:true\t", want: `}`},
+		{input: `{a:[true `, want: `]}`},
+		{input: `{a:[true]`, want: `}`},
+		{input: `{a:[{}`, want: `]}`},
 		{input: `{a:['\u12`},
 		{input: `{a:['x\`},
-		{input: `{a:['x\'`, want: `'x\'']}`},
+		{input: `{a:['x\'`},
 		{input: `{'name`},
 		{input: `[1 /* unfinished`},
 		{input: `[1 // comment`},
@@ -626,6 +645,7 @@ func FuzzMakeCompletion(f *testing.F) {
 		``, `{a:[0 `, `{'a/b~c': ['partial`, `{"a":"\u12`, `[1 2e-`, `{a:1 a`, `[1 ?`,
 		`{name:"x"en`, `{name:'x'/* done */en`, `{a:1 # comment`, `{a:1, /* unfinished`,
 		`{a:1 `, `{a   `, `[1e `, `[   `, `{a:[{b:1 `, `{a:['x\'`, `{a:1 a:2 `,
+		`\{a\:1`, `a\:\{b\:true`, `\[1\,\{a\:2`, `\{a\:\[\]`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -647,8 +667,8 @@ func FuzzMakeCompletion(f *testing.F) {
 				if note != "close" {
 					continue
 				}
-				if want := string(input[got.Start:]) + got.Closer; replacement != want {
-					t.Fatalf("wrap %q: closer %q changes source spelling, want %q", wrap, replacement, want)
+				if got.Start != len(input) || replacement != got.Closer {
+					t.Fatalf("wrap %q: closer %q replaces active token at %d in %q", wrap, replacement, got.Start, input)
 				}
 				completed := append(bytes.Clone(input[:got.Start]), replacement...)
 				reader := NewRelaxedReader(bytes.NewReader(completed))

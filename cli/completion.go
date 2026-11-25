@@ -121,7 +121,7 @@ func (s *Completion) Debug(format string, a ...any) {
 	}
 }
 
-// Reply applies AddPrefix/CutPrefix and writes shell completion suggests.
+// Reply applies AddPrefix/CutPrefix and shell quoting to completion suggestions.
 func (s *Completion) Reply(w io.Writer) error {
 	// FIXME: Normalize multiline notes and escape or reject embedded newlines in
 	// candidate text and Fish field tabs. Writing them verbatim turns one candidate
@@ -129,7 +129,11 @@ func (s *Completion) Reply(w io.Writer) error {
 
 	buffer := bufio.NewWriter(w)
 	edit := func(value string) (string, bool) {
-		return strings.CutPrefix(s.AddPrefix+value, s.CutPrefix)
+		text, ok := strings.CutPrefix(s.AddPrefix+value, s.CutPrefix)
+		if ok && s.Shell == shellBash {
+			text = escapeBashBraces(text)
+		}
+		return text, ok
 	}
 
 	// FIXME: Deduplicate Bash replacement texts before counting and adding notes.
@@ -175,6 +179,35 @@ func (s *Completion) Reply(w io.Writer) error {
 	}
 
 	return nil
+}
+
+// escapeBashBraces protects opening braces from Bash's completion parser.
+// Fish and Zsh quote candidates when inserting them; Bash inserts our text verbatim.
+func escapeBashBraces(text string) string {
+	var out strings.Builder
+	var quote byte
+	start := 0
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; {
+		case c == '\\' && quote != '\'':
+			i++ // Keep an existing escape and its following byte together.
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '{':
+			out.WriteString(text[start:i])
+			out.WriteString(`\{`)
+			start = i + 1
+		}
+	}
+	if start == 0 {
+		return text
+	}
+	out.WriteString(text[start:])
+	return out.String()
 }
 
 func completeFlagNames(_ context.Context, completion *Completion) {
