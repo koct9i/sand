@@ -131,7 +131,7 @@ func (s *Completion) Reply(w io.Writer) error {
 	edit := func(value string) (string, bool) {
 		text, ok := strings.CutPrefix(s.AddPrefix+value, s.CutPrefix)
 		if ok && s.Shell == shellBash {
-			text = escapeBashBraces(text)
+			text = escapeBashCompletion(text)
 		}
 		return text, ok
 	}
@@ -181,9 +181,9 @@ func (s *Completion) Reply(w io.Writer) error {
 	return nil
 }
 
-// escapeBashBraces protects opening braces from Bash's completion parser.
+// escapeBashCompletion protects unquoted shell metacharacters in completion text.
 // Fish and Zsh quote candidates when inserting them; Bash inserts our text verbatim.
-func escapeBashBraces(text string) string {
+func escapeBashCompletion(text string) string {
 	var out strings.Builder
 	var quote byte
 	start := 0
@@ -197,9 +197,10 @@ func escapeBashBraces(text string) string {
 			}
 		case c == '\'' || c == '"':
 			quote = c
-		case c == '{':
+		case strings.ContainsRune(" \t<>()&;|{*?[$`!#~", rune(c)):
 			out.WriteString(text[start:i])
-			out.WriteString(`\{`)
+			out.WriteByte('\\')
+			out.WriteByte(c)
 			start = i + 1
 		}
 	}

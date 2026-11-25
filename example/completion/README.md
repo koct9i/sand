@@ -6,8 +6,9 @@ With `sand` on your `PATH`, load Bash completion with:
 source <(sand completion bash)
 ```
 
-Bash suggestions escape unquoted opening braces as `\{` so nested JSON remains
-completable with the default word breaks. Existing escapes and quoted braces
+Bash suggestions escape unquoted shell metacharacters, including `<`, `>`, spaces,
+and opening braces (`\{`), so values remain single arguments and nested JSON remains
+completable with the default word breaks. Existing escapes and quoted text
 are preserved. Fish and Zsh quote their inserted candidates automatically.
 Manually typed, unescaped nested braces can still prevent Bash from invoking
 the handler. String-keyed dictionaries suggest `_key_:`, or the key

@@ -419,7 +419,7 @@ func TestCompletionReplyPreservesSuggestions(t *testing.T) {
 	}
 }
 
-func TestCompletionReplyEscapesBashBraces(t *testing.T) {
+func TestCompletionReplyEscapesBashMetacharacters(t *testing.T) {
 	for _, tt := range []struct {
 		name, value, addPrefix, cutPrefix, want string
 	}{
@@ -431,8 +431,26 @@ func TestCompletionReplyEscapesBashBraces(t *testing.T) {
 		{name: "single quoted", value: `name:'{'`, want: `name:'{'`},
 		{name: "escaped quote", value: `name:"a\"{"`, want: `name:"a\"{"`},
 		{name: "mixed quotes", value: `{name:'{'}`, want: `\{name:'{'}`},
-		{name: "other punctuation", value: `[]:},`, want: `[]:},`},
+		{name: "redirections", value: `value<>file`, want: `value\<\>file`},
+		{name: "process substitution", value: `<(input)>(output)`, want: `\<\(input\)\>\(output\)`},
+		{name: "operators", value: `a&&b||c;d&e|f`, want: `a\&\&b\|\|c\;d\&e\|f`},
+		{name: "substitutions", value: "$(id)`id`${name}", want: "\\$\\(id\\)\\`id\\`\\$\\{name}"},
+		{name: "globs", value: `file*[ab]?.txt`, want: `file\*\[ab]\?.txt`},
+		{name: "history", value: `!value`, want: `\!value`},
+		{name: "comment", value: `#value`, want: `\#value`},
+		{name: "tilde", value: `~/path`, want: `\~/path`},
+		{name: "spaces", value: `two words`, want: `two\ words`},
+		{name: "tabs", value: "two\twords", want: "two\\\twords"},
+		{name: "escaped metacharacters", value: `a\<b\>c\&d\ e`, want: `a\<b\>c\&d\ e`},
+		{name: "double quoted metacharacters", value: `name:"<a>&(b); [c]*?"`, want: `name:"<a>&(b); [c]*?"`},
+		{name: "single quoted metacharacters", value: "name:'<$a>&`b`; [c]*?'", want: "name:'<$a>&`b`; [c]*?'"},
+		{name: "unfinished quotes", value: `name:"<a>`, want: `name:"<a>`},
+		{name: "after quotes", value: `"<a>"<b>`, want: `"<a>"\<b\>`},
+		{name: "trailing escape", value: `value\`, want: `value\`},
+		{name: "other punctuation", value: `]:},=+@%/-_`, want: `]:},=+@%/-_`},
 		{name: "prefixes", value: `path/{`, addPrefix: "--output=", cutPrefix: "--output=path/", want: `\{`},
+		{name: "metacharacter prefixes", value: `path/<file>`, addPrefix: "--output=", cutPrefix: "--output=path/", want: `\<file\>`},
+		{name: "metacharacter added prefix", value: `file>`, addPrefix: "<", want: `\<file\>`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			original := []Suggestion{{Text: tt.value, Note: "Value"}}
@@ -450,20 +468,20 @@ func TestCompletionReplyEscapesBashBraces(t *testing.T) {
 	}
 }
 
-func TestCompletionReplyBraceQuotingAcrossShells(t *testing.T) {
+func TestCompletionReplyQuotingAcrossShells(t *testing.T) {
 	for _, tt := range []struct{ shell, want string }{
-		{"bash", "\\{host:\n"},
-		{"fish", "{host:\tServer host\n"},
-		{"zsh", "{host\\::Server host\n"},
+		{"bash", "\\{host:\\<value\\>\\&\\(x\\)\n"},
+		{"fish", "{host:<value>&(x)\tServer host\n"},
+		{"zsh", "{host\\:<value>&(x):Server host\n"},
 	} {
 		t.Run(tt.shell, func(t *testing.T) {
 			completion := &Completion{Shell: tt.shell}
-			completion.Suggest("{host:", "Server host")
+			completion.Suggest("{host:<value>&(x)", "Server host")
 			var output strings.Builder
 			if err := completion.Reply(&output); err != nil {
 				t.Fatal(err)
 			}
-			if output.String() != tt.want || !slices.Equal(completion.Output, []Suggestion{{Text: "{host:", Note: "Server host"}}) {
+			if output.String() != tt.want || !slices.Equal(completion.Output, []Suggestion{{Text: "{host:<value>&(x)", Note: "Server host"}}) {
 				t.Fatalf("Reply = %q, values = %v; want %q and an unchanged candidate", output.String(), completion.Output, tt.want)
 			}
 		})
