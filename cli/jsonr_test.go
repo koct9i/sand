@@ -39,7 +39,7 @@ func TestJSONRArgsParse(t *testing.T) {
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var got jsonrConfig
-			a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &got, Max: -1}
+			a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &got}
 			cmd := cli.Command{
 				Name:      "configure",
 				Writer:    io.Discard,
@@ -56,18 +56,18 @@ func TestJSONRArgsParse(t *testing.T) {
 	}
 }
 
-func TestJSONRArgsDefaultsAndLimits(t *testing.T) {
+func TestJSONRArgsDefaults(t *testing.T) {
 	initial := jsonrConfig{Name: "default", Enabled: true}
 	var got jsonrConfig
-	a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Value: initial, Destination: &got, Max: 1}
-	if !a.HasName("config") || a.HasName("other") || a.Usage() != "[config]" || !reflect.DeepEqual(a.Get(), initial) {
+	a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Value: initial, Destination: &got}
+	if !a.HasName("config") || a.HasName("other") || a.Usage() != "config [config ...]" || !reflect.DeepEqual(a.Get(), initial) {
 		t.Fatalf("unexpected argument metadata: usage %q, value %#v", a.Usage(), a.Get())
 	}
 	if rest, err := a.Parse(nil); err != nil || len(rest) != 0 || !reflect.DeepEqual(got, initial) {
 		t.Fatalf("empty input: rest %v, error %v, value %#v", rest, err, got)
 	}
-	if rest, err := a.Parse([]string{"name:custom", "remaining"}); err != nil || !reflect.DeepEqual(rest, []string{"remaining"}) || got.Name != "custom" || !got.Enabled {
-		t.Fatalf("bounded input: rest %v, error %v, value %#v", rest, err, got)
+	if rest, err := a.Parse([]string{"name:custom", "enabled:false"}); err != nil || len(rest) != 0 || got.Name != "custom" || got.Enabled {
+		t.Fatalf("variadic input: rest %v, error %v, value %#v", rest, err, got)
 	}
 	if _, err := a.Parse(nil); err != nil || !reflect.DeepEqual(got, initial) {
 		t.Fatalf("repeated parse retained previous input: value %#v, error %v", got, err)
@@ -82,23 +82,16 @@ func TestJSONRArgsRejectInvalidInput(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
 		args    []string
-		min     int
-		max     int
 		options []json.Options
 	}{
-		{name: "syntax", args: []string{"server:{"}, max: -1},
-		{name: "type", args: []string{"enabled:hello"}, max: -1},
-		{name: "duplicate", args: []string{"name:first name:second"}, max: -1},
-		{name: "unknown", args: []string{"missing:1"}, max: -1, options: []json.Options{json.RejectUnknownMembers(true)}},
-		{name: "missing", min: 1, max: -1},
-		{name: "zero max"},
-		{name: "negative max", max: -2},
-		{name: "negative min", min: -1, max: -1},
-		{name: "min greater than max", min: 2, max: 1},
+		{name: "syntax", args: []string{"server:{"}},
+		{name: "type", args: []string{"enabled:hello"}},
+		{name: "duplicate", args: []string{"name:first name:second"}},
+		{name: "unknown", args: []string{"missing:1"}, options: []json.Options{json.RejectUnknownMembers(true)}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := jsonrConfig{Name: "unchanged"}
-			a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &got, Min: tt.min, Max: tt.max, Options: tt.options}
+			a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &got, Options: tt.options}
 			rest, err := a.Parse(tt.args)
 			if err == nil || !strings.Contains(err.Error(), "config") {
 				t.Fatalf("Parse error = %v, want an error naming config", err)
@@ -151,6 +144,10 @@ func TestJSONRArgsCompletion(t *testing.T) {
 		{[]string{"byName:{'':"}, map[string]string{"byName:{'':{}": "/byName/", "byName:{'':{host:": "Server host", "byName:{'':{ports:": "Listening ports"}},
 		{[]string{"byName:{"}, map[string]string{"byName:{_key_:": "/byName/_key_", "byName:{}": "close"}},
 		{[]string{"byName:{primary"}, map[string]string{"byName:{primary:": "/byName/primary"}},
+		{[]string{"byName:", `\{a`, ""}, map[string]string{":": "/byName/a"}},
+		{[]string{"byName", ":", `\{a`, ""}, map[string]string{":": "/byName/a"}},
+		{[]string{"byName:{'two words'", ""}, map[string]string{":": "/byName/two words"}},
+		{[]string{"byName:{a "}, map[string]string{"byName:{a :": "/byName/a"}},
 		{[]string{"server:"}, map[string]string{"server:{}": "/server", "server:{host:": "Server host", "server:{ports:": "Listening ports"}},
 		{[]string{"server:", ""}, map[string]string{"{}": "/server", "{host:": "Server host", "{ports:": "Listening ports"}},
 		{[]string{"servers:"}, map[string]string{"servers:[": "/servers", "servers:null": "/servers"}},
@@ -202,7 +199,7 @@ func TestJSONRArgsCompletion(t *testing.T) {
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			destination := jsonrConfig{Name: "unchanged"}
-			a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &destination, Min: 10, Max: -1}
+			a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &destination}
 			c := &cli.Completion{
 				Arguments: tt.args, Input: tt.args[len(tt.args)-1],
 			}
@@ -224,7 +221,7 @@ func TestJSONRBoolCompletionBoundary(t *testing.T) {
 	}
 	root := &cli.Command{
 		Name:      "configure",
-		Arguments: []cli.Argument{&cli.RelaxedJSONArguments[config]{Name: "config", Max: -1}},
+		Arguments: []cli.Argument{&cli.RelaxedJSONArguments[config]{Name: "config"}},
 	}
 	for _, shell := range []string{"bash", "fish", "zsh"} {
 		for _, tt := range []struct {
@@ -252,7 +249,7 @@ func TestJSONRBoolCompletionBoundary(t *testing.T) {
 func TestJSONRArgsShellCompletion(t *testing.T) {
 	var output bytes.Buffer
 	destination := jsonrConfig{Name: "unchanged"}
-	a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &destination, Max: -1}
+	a := cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Destination: &destination}
 	root := cli.Command{
 		Name:           "sand",
 		Writer:         &output,
@@ -305,7 +302,7 @@ func TestJSONRArgsShellCompletion(t *testing.T) {
 func TestJSONRArgsValueShellCompletion(t *testing.T) {
 	root := &cli.Command{
 		Name:      "configure",
-		Arguments: []cli.Argument{&cli.RelaxedJSONArguments[jsonrConfig]{Name: "config", Max: -1}},
+		Arguments: []cli.Argument{&cli.RelaxedJSONArguments[jsonrConfig]{Name: "config"}},
 	}
 	for _, tt := range []struct {
 		shell, input, want string
@@ -336,7 +333,7 @@ func ExampleRelaxedJSONArguments() {
 		Port int    `json:"port" help:"Listening port"`
 	}
 	var config Config
-	arg := cli.RelaxedJSONArguments[Config]{Name: "config", Destination: &config, Max: -1}
+	arg := cli.RelaxedJSONArguments[Config]{Name: "config", Destination: &config}
 	if _, err := arg.Parse([]string{"name:example", "port:8080"}); err != nil {
 		panic(err)
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -30,6 +32,37 @@ type Completor interface {
 type Suggestion struct {
 	Text string
 	Note string
+}
+
+type ValueCompletion struct {
+	Completion  CompleteFunc
+	Suggestions []Suggestion
+}
+
+func (v *ValueCompletion) Complete(ctx context.Context, completion *Completion) {
+	if v.Completion != nil {
+		v.Completion(ctx, completion)
+	}
+	for _, s := range v.Suggestions {
+		if strings.HasPrefix(s.Text, completion.Input) {
+			completion.Suggest(s.Text, s.Note)
+		}
+	}
+}
+
+type BoolCompletion struct {
+	TNote string
+	FNote string
+}
+
+func (v *BoolCompletion) Complete(_ context.Context, completion *Completion) {
+	value, err := strconv.ParseBool(completion.Input)
+	if err != nil || value {
+		completion.Suggest("true", cmp.Or(v.TNote, "enable"))
+	}
+	if err != nil || !value {
+		completion.Suggest("false", cmp.Or(v.FNote, "disable"))
+	}
 }
 
 // Completion holds the input, parser state, and results of one completion request.
@@ -82,21 +115,26 @@ func MakeCompletion(ctx context.Context, root *Command, shell string, words []st
 		Words:       slices.Clone(words),
 		DebugWriter: debug,
 	}
+	s.Debug("completion: request shell=%q words=%q\n", shell, words)
 
 	s.normalizeWords()
 
 	if len(s.Words) == 0 {
 		s.Words = []string{""}
 	}
+	s.Debug("completion: normalized words=%q cut_prefix=%q\n", s.Words, s.CutPrefix)
 
 	s.Input = s.Words[len(s.Words)-1]
 
 	s.enterCommand(root)
 
 	s.parseWords()
+	s.Debug("completion: parsed input=%q positional=%q stop_flags=%t add_prefix=%q cut_prefix=%q\n", s.Input, s.Positional, s.StopFlags, s.AddPrefix, s.CutPrefix)
 
 	if s.Complete != nil {
 		s.Complete(ctx, s)
+	} else {
+		s.Debug("completion: no completion handler\n")
 	}
 
 	s.fixupOutput()
@@ -104,20 +142,23 @@ func MakeCompletion(ctx context.Context, root *Command, shell string, words []st
 	slices.SortStableFunc(s.Output, func(a, b Suggestion) int {
 		return strings.Compare(a.Text, b.Text)
 	})
+	s.Debug("completion: collected %d candidates\n", len(s.Output))
 
 	return s
 }
 
 // Suggest appends a completed value and its description.
 func (s *Completion) Suggest(text, note string) {
+	s.Debug("completion: suggest text=%q note=%q\n", text, note)
 	s.Output = append(s.Output, Suggestion{Text: text, Note: note})
 }
 
+// Debug writes formatted diagnostics to DebugWriter when completion debugging is enabled.
+//
+//nolint:goprintffuncname // Preserve the public callback API.
 func (s *Completion) Debug(format string, a ...any) {
-	// FIXME: Add parser and handler diagnostics using Debug. No built-in path
-	// calls it, so --debug remains silent unless a custom callback logs messages.
 	if s.DebugWriter != nil {
-		_, _ = fmt.Fprintf(s.DebugWriter, format, a...)
+		_, _ = fmt.Fprintf(s.DebugWriter, format, a...) //nolint:errcheck // Diagnostics must not interrupt completion.
 	}
 }
 
@@ -126,6 +167,7 @@ func (s *Completion) Reply(w io.Writer) error {
 	// FIXME: Normalize multiline notes and escape or reject embedded newlines in
 	// candidate text and Fish field tabs. Writing them verbatim turns one candidate
 	// or note into multiple protocol records.
+	s.Debug("completion: reply shell=%q candidates=%d add_prefix=%q cut_prefix=%q\n", s.Shell, len(s.Output), s.AddPrefix, s.CutPrefix)
 
 	buffer := bufio.NewWriter(w)
 	edit := func(value string) (string, bool) {
@@ -152,6 +194,7 @@ func (s *Completion) Reply(w io.Writer) error {
 	for _, value := range s.Output {
 		text, ok := edit(value.Text)
 		if !ok {
+			s.Debug("completion: skip text=%q: does not match cut_prefix=%q\n", value.Text, s.CutPrefix)
 			continue
 		}
 		var err error
@@ -164,14 +207,15 @@ func (s *Completion) Reply(w io.Writer) error {
 			_, err = fmt.Fprintf(buffer, "%s\t%s\n", text, note)
 		case s.Shell == shellZsh:
 			// _describe separates the candidate and description with a colon.
-			escaped := strings.NewReplacer("\\", "\\\\", ":", "\\:").Replace(text)
-			_, err = fmt.Fprintf(buffer, "%s:%s\n", escaped, note)
+			text = strings.NewReplacer("\\", "\\\\", ":", "\\:").Replace(text)
+			_, err = fmt.Fprintf(buffer, "%s:%s\n", text, note)
 		default:
 			_, err = fmt.Fprintln(buffer, text)
 		}
 		if err != nil {
 			return err
 		}
+		s.Debug("completion: reply text=%q note=%q\n", text, note)
 	}
 
 	if err := buffer.Flush(); err != nil {
@@ -284,6 +328,7 @@ func (s *Completion) fixupOutput() {
 		}
 	}
 	if common != "" && !strings.Contains(common, input) {
+		s.Debug("completion: preserve Bash input=%q: common_prefix=%q\n", input, common)
 		s.Suggest(s.Input, "")
 	}
 }
@@ -293,6 +338,7 @@ func (s *Completion) enterCommand(command *Command) {
 	s.Commands = append(s.Commands, command)
 	s.collectFlags()
 	s.StopFlags = false
+	s.Debug("completion: enter command=%q flags=%d\n", command.Name, len(s.Flags))
 }
 
 func (s *Completion) flagsEnabled() bool {
@@ -305,8 +351,10 @@ func (s *Completion) parseWords() {
 	// FIXME: Honor Command.DefaultCommand when resolving flags and arguments, or
 	// document that completion does not support the normal parser's default routing.
 	for _, word := range s.Words[:len(s.Words)-1] {
+		s.Debug("completion: parse word=%q\n", word)
 		if s.Pending != nil {
 			// A required flag value takes precedence over delimiters and subcommands.
+			s.Debug("completion: consume value=%q for flag=%q\n", word, s.Pending.Names())
 			s.Pending = nil
 			continue
 		}
@@ -314,11 +362,13 @@ func (s *Completion) parseWords() {
 			if word == "--" {
 				// FIXME: Continue positional completion after the flag delimiter, or
 				// document that suppressing all suggestions here is intentional.
+				s.Debug("completion: stop at flag delimiter\n")
 				return // Remaining words are pass-through arguments.
 			}
 			if isFlagWord(word) {
 				// Ignore unknown flags so incomplete input can still reach a handler.
 				flag, _, hasValue := s.flag(word)
+				s.Debug("completion: flag word=%q known=%t inline_value=%t\n", word, flag != nil, hasValue)
 				if flag != nil && flagTakesValue(flag) && !hasValue {
 					s.Pending = flag
 				}
@@ -339,6 +389,7 @@ func (s *Completion) parseWords() {
 		if completor, ok := s.Pending.(Completor); ok {
 			s.Complete = completor.Complete
 		}
+		s.Debug("completion: handler=flag-value flag=%q supported=%t\n", s.Pending.Names(), s.Complete != nil)
 		return
 	}
 	if s.flagsEnabled() && (s.Input == "-" || isFlagWord(s.Input)) {
@@ -352,21 +403,25 @@ func (s *Completion) parseWords() {
 				s.AddPrefix, s.CutPrefix = after, ""
 			}
 			s.Input = value
+			s.Debug("completion: handler=inline-flag-value input=%q supported=%t\n", s.Input, s.Complete != nil)
 			return
 		}
 		s.Complete = completeFlagNames
+		s.Debug("completion: handler=flag-names input=%q\n", s.Input)
 		return
 	}
-	for _, argument := range s.Command.Arguments {
+	for index, argument := range s.Command.Arguments {
 		count := argumentMax(argument)
 		if count == -1 || len(s.Positional) < count {
 			if completor, ok := argument.(Completor); ok {
 				s.Complete = completor.Complete
 				s.Arguments = append(slices.Clone(s.Positional), s.Input)
 			}
+			s.Debug("completion: handler=argument index=%d type=%T arguments=%q supported=%t\n", index, argument, s.Arguments, s.Complete != nil)
 			return
 		}
 		if count <= 0 {
+			s.Debug("completion: argument index=%d has no remaining values\n", index)
 			return
 		}
 		// Skip completed declarations so Arguments is local to the selected argument.
@@ -374,6 +429,7 @@ func (s *Completion) parseWords() {
 	}
 	if len(s.Command.Arguments) == 0 && len(s.Positional) == 0 {
 		s.Complete = completeCommands
+		s.Debug("completion: handler=commands input=%q\n", s.Input)
 	}
 }
 
@@ -463,10 +519,13 @@ func (s *Completion) collectFlags() {
 }
 
 func argumentMax(argument Argument) int {
+	// Custom arguments can report their capacity without exposing a Max field.
+	// A negative capacity of -1 means all remaining words belong to the argument.
+	if argument, ok := argument.(interface{ MaxArgs() int }); ok {
+		return argument.MaxArgs()
+	}
 	// cli.Argument has no arity method. Read the public Max configuration shared
 	// by its variadic implementations; other arguments consume one word.
-	// FIXME: Prefer an optional arity interface so custom arguments can report
-	// their capacity without relying on reflection over a struct field named Max.
 	value := reflect.Indirect(reflect.ValueOf(argument))
 	if value.Kind() == reflect.Struct {
 		if count := value.FieldByName("Max"); count.IsValid() && count.Kind() == reflect.Int {
@@ -519,35 +578,39 @@ func (s *Completion) normalizeWords() {
 
 // generateCompletionScript returns a path relative to XDG_DATA_HOME and its contents.
 // command is the completed executable; handler is the executable serving requests.
-func generateCompletionScript(shell, command, handler string) (scriptPath string, script string, err error) {
+func generateCompletionScript(shell, command, handler string, debug bool) (scriptPath string, script string, err error) {
 	// FIXME: Validate --alias as a basename and escape command and handler for each
 	// shell, including generated function identifiers. An alias like ../../../escaped
 	// escapes the installation directory; shell metacharacters also enter the source.
+	debugFlag := ""
+	if debug {
+		debugFlag = " --debug"
+	}
 	switch shell {
 	case shellBash:
 		scriptPath = fmt.Sprintf("bash-completion/completions/%s", command)
 		script = fmt.Sprintf(`__%s_complete_bash() {
-  mapfile -t COMPREPLY < <("%[2]s" completion --complete bash -- "${COMP_WORDS[@]:1:COMP_CWORD}")
+  mapfile -t COMPREPLY < <("%[2]s" completion%[3]s --complete bash -- "${COMP_WORDS[@]:1:COMP_CWORD}")
 }
 complete -o bashdefault -o default -F __%[1]s_complete_bash %[1]s
-`, command, handler)
+`, command, handler, debugFlag)
 
 	case shellFish:
 		scriptPath = fmt.Sprintf("fish/vendor_completions.d/%s.fish", command)
 		script = fmt.Sprintf(`function __fish_%[1]s_complete
   set -l args (commandline -opc) (commandline -ct)
   set -e args[1]
-  "%[2]s" completion --complete fish -- $args
+  "%[2]s" completion%[3]s --complete fish -- $args
 end
 complete -a "(__fish_%[1]s_complete)" -c "%[1]s"
-`, command, handler)
+`, command, handler, debugFlag)
 
 	case shellZsh:
 		scriptPath = fmt.Sprintf("zsh/site-functions/_%s", command)
 		script = fmt.Sprintf(`#compdef %[1]s
 _%[1]s() {
   local -a completions
-  completions=(${(f)"$("%[2]s" completion --complete zsh -- "${words[@]:1:$((CURRENT-1))}")"})
+  completions=(${(f)"$("%[2]s" completion%[3]s --complete zsh -- "${words[@]:1:$((CURRENT-1))}")"})
   if (( ${#completions[@]} )); then
     _describe 'completions' completions
   else
@@ -558,7 +621,7 @@ compdef _%[1]s %[1]s
 if [ "$funcstack[1]" = "_%[1]s" ]; then
   _%[1]s
 fi
-`, command, handler)
+`, command, handler, debugFlag)
 
 	case "":
 		return "", "", fmt.Errorf("shell is not specified")
@@ -569,8 +632,8 @@ fi
 	return scriptPath, script, nil
 }
 
-func doCompletionScript(writer io.Writer, shell, command, handler string, install bool) error {
-	scriptPath, script, err := generateCompletionScript(shell, command, handler)
+func doCompletionScript(writer io.Writer, shell, command, handler string, install, debug bool) error {
+	scriptPath, script, err := generateCompletionScript(shell, command, handler, debug)
 	if err != nil {
 		return err
 	}
@@ -625,7 +688,7 @@ func CompletionCommand() *Command {
 			&BoolFlag{
 				Name:        "debug",
 				Destination: &debug,
-				Usage:       "Print completion debug messages.",
+				Usage:       "Print completion debug messages and enable them in generated scripts.",
 			},
 			&BoolFlag{
 				Name:        "install",
@@ -662,7 +725,7 @@ func CompletionCommand() *Command {
 			if alias == "" {
 				alias = handler
 			}
-			return doCompletionScript(c.Writer, shell, alias, handler, install)
+			return doCompletionScript(c.Writer, shell, alias, handler, install, debug)
 		},
 	}
 }

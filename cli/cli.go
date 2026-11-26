@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"strings"
 
 	"github.com/urfave/cli/v3"
 )
@@ -36,13 +35,13 @@ type (
 		cli.Float64Flag
 		ValueCompletion
 	}
-	BoolFlag = struct {
+	BoolFlag struct {
 		cli.BoolFlag
-		ValueCompletion
+		BoolCompletion
 	}
 	BoolWithInverseFlag = struct {
 		cli.BoolWithInverseFlag
-		ValueCompletion
+		BoolCompletion
 	}
 	StringFlag = struct {
 		cli.StringFlag
@@ -147,22 +146,6 @@ func (a *NoMoreArguments) Parse(s []string) ([]string, error) {
 
 var NoArguments = []Argument{
 	&NoMoreArguments{},
-}
-
-type ValueCompletion struct {
-	Completion  CompleteFunc
-	Suggestions []Suggestion
-}
-
-func (v *ValueCompletion) Complete(ctx context.Context, completion *Completion) {
-	if v.Completion != nil {
-		v.Completion(ctx, completion)
-	}
-	for _, s := range v.Suggestions {
-		if strings.HasPrefix(s.Text, completion.Input) {
-			completion.Suggest(s.Text, s.Note)
-		}
-	}
 }
 
 type ValueOptional struct{}

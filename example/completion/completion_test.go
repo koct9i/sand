@@ -45,6 +45,7 @@ func TestCompletionExamples(t *testing.T) {
 		{"nested json field", "fish", []string{"json", "server:{", "ho"}, map[string]string{"host:": "Server host"}},
 		{"omit used json field", "fish", []string{"json", "server:{host:localhost", ""}, map[string]string{"port:": "Server port", "}": "close"}},
 		{"json object", "fish", []string{"json", "server:"}, map[string]string{"server:{}": "/server", "server:{host:": "Server host", "server:{port:": "Server port"}},
+		{"bash json trailing colon", "bash", []string{"json", "server", ":"}, map[string]string{":{}": "/server", ":{host:": "Server host", ":{port:": "Server port"}},
 		{"bash json object", "bash", []string{"json", "server", ":", ""}, map[string]string{"{}": "/server", "{host:": "Server host", "{port:": "Server port"}},
 		{"json boolean", "fish", []string{"json", "enabled:"}, map[string]string{"enabled:true": "/enabled", "enabled:false": "/enabled"}},
 		{"json slice", "fish", []string{"json", "tags:"}, map[string]string{"tags:[": "/tags", "tags:null": "/tags"}},
@@ -53,6 +54,9 @@ func TestCompletionExamples(t *testing.T) {
 		{"recursive json dict", "fish", []string{"json", "children:"}, map[string]string{"children:{}": "/children", "children:null": "/children"}},
 		{"empty recursive json dict", "bash", []string{"json", "children", ":", "{"}, map[string]string{"{_key_:": "/children/_key_", "{}": "close"}},
 		{"recursive json dict key", "bash", []string{"json", "children", ":", "{api"}, map[string]string{"{api:": "/children/api"}},
+		{"recursive json dict key colon", "bash", []string{"json", "children", ":", `\{a`, ""}, map[string]string{":": "/children/a"}},
+		{"recursive json dict key colon fish", "fish", []string{"json", "children:", "{a", ""}, map[string]string{":": "/children/a"}},
+		{"recursive json dict key colon zsh", "zsh", []string{"json", "children:", "{a", ""}, map[string]string{":": "/children/a"}},
 		{"nested recursive json dict keys", "fish", []string{"json", "children:{api:{children:{"}, map[string]string{
 			"children:{api:{children:{_key_:": "/children/api/children/_key_",
 			"children:{api:{children:{}}}":    "close",
@@ -89,6 +93,25 @@ func TestCompletionExamples(t *testing.T) {
 				t.Fatalf("completion of %q = %v, want %v", words, got.Output, tt.want)
 			}
 		})
+	}
+}
+
+func TestBashJSONTrailingColonReply(t *testing.T) {
+	root := &cli.Command{
+		Name: "sand",
+		Commands: []*cli.Command{{
+			Name: "example", Commands: []*cli.Command{completion.NewCommand()},
+		}},
+	}
+	words := []string{"example", "completion", "json", "server", ":"}
+	got := cli.MakeCompletion(t.Context(), root, "bash", words, nil)
+	var reply bytes.Buffer
+	if err := got.Reply(&reply); err != nil {
+		t.Fatal(err)
+	}
+	const want = "\\{host:   (Server host)\n\\{port:   (Server port)\n\\{}       (/server)\n"
+	if reply.String() != want {
+		t.Fatalf("Reply = %q, want %q", reply.String(), want)
 	}
 }
 

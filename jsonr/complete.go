@@ -37,6 +37,8 @@ type Completion struct {
 	canClose bool
 	// finished marks a completed object or array at the cursor so the shell can finish the word.
 	finished bool
+	// colonPointer identifies a completed object name awaiting its colon after trivia.
+	colonPointer string
 }
 
 // MakeCompletion reads input and returns the token at the end of relaxed JSON input,
@@ -56,10 +58,9 @@ type Completion struct {
 // pointer component until a colon is entered. Incomplete strings with unfinished
 // escapes retain their encoded content. Parsing stops at the first syntax error.
 func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
+	var c Completion
 	in.openWrap = true
 	d := jsontext.NewDecoder(in, append([]jsontext.Options{jsontext.AllowDuplicateNames(true)}, opts...)...)
-	var token, pointer, closer string
-	var keys []string
 	var last jsontext.Kind
 	var text string
 	var err error
@@ -84,7 +85,8 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 		last, text = t.Kind(), t.String()
 	}
 
-	start := int(in.inOffset)
+	c.Wrap = in.wrap
+	c.Start = int(in.inOffset)
 	tail := d.UnreadBuffer()
 	atToken := in.inOffset > in.triviaEnd
 	active := false
@@ -92,8 +94,8 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 	case '"', '0', 'n', 't', 'f':
 		active = len(tail) == 0 && atToken
 		if active {
-			token = text
-			start = int(in.lastStart)
+			c.Token = text
+			c.Start = int(in.lastStart)
 		}
 	}
 	rest := bytes.TrimLeft(tail, " \t\r\n")
@@ -104,60 +106,63 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 	if atToken && errors.Is(err, io.ErrUnexpectedEOF) && len(rest) > 0 {
 		switch {
 		case rest[0] == '"':
-			start = int(in.lastStart)
-			token = string(rest[1:])
+			c.Start = int(in.lastStart)
+			c.Token = string(rest[1:])
 			if decoded, err := jsontext.AppendUnquote(nil, string(rest)+`"`); err == nil {
-				token = string(decoded)
+				c.Token = string(decoded)
 			}
-			closer = string(in.last)
+			c.Closer = string(in.last)
 		case rest[0] == '-' || rest[0] >= '0' && rest[0] <= '9':
-			start = int(in.lastStart)
-			token = string(rest)
+			c.Start = int(in.lastStart)
+			c.Token = string(rest)
 		}
 	}
 
 	depth := d.StackDepth()
 	path := d.StackPointer()
 	kind, count := d.StackIndex(depth)
+	if kind == '{' && count%2 == 1 && !active && len(tail) == 0 &&
+		errors.Is(in.err, io.EOF) && !in.inComment && errors.Is(err, io.ErrUnexpectedEOF) {
+		c.colonPointer = string(path)
+	}
 	// Closing the innermost container completes the value in every parent.
 	// Only offer closers at a token boundary, so a value prefix such as "t"
 	// completes to "true" without competing with "t}". Objects need paired
 	// names and values before closing.
-	canClose := start == int(in.inOffset) && len(rest) == 0 && (kind != '{' || count%2 == 0)
-	canClose = canClose && in.err == io.EOF && !in.inComment &&
-		(err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF))
-	if in.wrap != 0 && depth > 0 {
+	c.canClose = c.Start == int(in.inOffset) && len(rest) == 0 && (kind != '{' || count%2 == 0)
+	c.canClose = c.canClose && errors.Is(in.err, io.EOF) && !in.inComment &&
+		(errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF))
+	if c.Wrap != 0 && depth > 0 {
 		outer, _ := d.StackIndex(1)
-		canClose = canClose && outer == jsontext.Kind(in.wrap)
+		c.canClose = c.canClose && outer == jsontext.Kind(c.Wrap)
 	}
 	base := path
 	if count > 0 {
 		base = path.Parent()
 	}
-	var value bool
 	switch kind {
 	case '{':
-		keys = keyStack[depth-1]
+		c.Keys = keyStack[depth-1]
 		if active && count%2 == 1 {
-			keys = keys[:len(keys)-1]
+			c.Keys = c.Keys[:len(c.Keys)-1]
 		}
-		value = count%2 == 1 && colon || count%2 == 0 && active
-		if value {
-			pointer = string(path)
+		c.Value = count%2 == 1 && colon || count%2 == 0 && active
+		if c.Value {
+			c.Pointer = string(path)
 		} else {
-			pointer = string(base.AppendToken(""))
+			c.Pointer = string(base.AppendToken(""))
 		}
 	case '[':
-		value = true
+		c.Value = true
 		if active {
 			count--
 		}
-		pointer = string(base.AppendToken(strconv.FormatInt(count, 10)))
+		c.Pointer = string(base.AppendToken(strconv.FormatInt(count, 10)))
 	default:
-		value = count == 0 || active
+		c.Value = count == 0 || active
 	}
-	closing := make([]byte, 0, len(closer)+depth)
-	closing = append(closing, closer...)
+	closing := make([]byte, 0, len(c.Closer)+depth)
+	closing = append(closing, c.Closer...)
 	for i := depth; i > 0; i-- {
 		kind, _ := d.StackIndex(i)
 		if kind == '{' {
@@ -166,18 +171,18 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 			closing = append(closing, ']')
 		}
 	}
-	closer = string(closing)
-	switch in.wrap {
+	c.Closer = string(closing)
+	switch c.Wrap {
 	case '{':
-		closer = strings.TrimSuffix(closer, "}")
+		c.Closer = strings.TrimSuffix(c.Closer, "}")
 	case '[':
-		closer = strings.TrimSuffix(closer, "]")
+		c.Closer = strings.TrimSuffix(c.Closer, "]")
 	}
 	if in.inComment {
-		start = -1
+		c.Start = -1
 	}
-	finished := in.err == io.EOF && atToken && len(tail) == 0 && (last == '}' || last == ']')
-	return Completion{Token: token, Pointer: pointer, Closer: closer, Start: start, Value: value, Keys: keys, Wrap: in.wrap, canClose: canClose, finished: finished}
+	c.finished = errors.Is(in.err, io.EOF) && atToken && len(tail) == 0 && (last == '}' || last == ']')
+	return c
 }
 
 // Complete adds matching relaxed JSON replacements and descriptions to completions.
@@ -188,12 +193,17 @@ func MakeCompletion(in *RelaxedReader, opts ...jsontext.Options) Completion {
 // name followed by a colon. Struct fields use help tags as descriptions; other suggestions
 // use their JSON Pointer. A completed object or array returns an empty replacement
 // so shells can finish the current word, alongside any remaining outer closers.
+// After a completed object name and trailing trivia, only its missing colon is suggested.
 // Closing suggestions use "close" as the description and appear only at a token
 // boundary or after a completed container, never while completing a scalar or
 // string. MakeCompletion records whether closing is possible during its initial
 // parse; Complete does not parse the input again. Comments produce no suggestions.
 func (c Completion) Complete(s any, completions map[string]string) {
 	if completions == nil || c.Start < 0 {
+		return
+	}
+	if c.colonPointer != "" {
+		completions[":"] = c.colonPointer
 		return
 	}
 	if c.canClose && c.Closer != "" {

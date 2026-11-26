@@ -33,6 +33,11 @@ func (a *RelaxedJSONArguments[T]) HasName(name string) bool {
 	return name == a.Name
 }
 
+// MaxArgs reports that the JSON document consumes all remaining arguments.
+func (a *RelaxedJSONArguments[T]) MaxArgs() int {
+	return -1
+}
+
 func (a *RelaxedJSONArguments[T]) Usage() string {
 	return (&StringArgs{Name: a.Name, UsageText: a.UsageText, Min: 1, Max: -1}).Usage()
 }
@@ -79,7 +84,9 @@ func (a *RelaxedJSONArguments[T]) Complete(_ context.Context, c *Completion) {
 	reader := jsonr.NewRelaxedReader(strings.NewReader(input))
 	reader.Wrap('{')
 	comp := jsonr.MakeCompletion(reader, a.Options...)
+	c.Debug("completion: JSON token=%q pointer=%q start=%d value=%t closer=%q\n", comp.Token, comp.Pointer, comp.Start, comp.Value, comp.Closer)
 	if comp.Start < 0 {
+		c.Debug("completion: skip JSON completion inside a comment\n")
 		return // The cursor is inside a comment.
 	}
 	// Translate the token's byte offset from the full input to the current word.
@@ -87,6 +94,7 @@ func (a *RelaxedJSONArguments[T]) Complete(_ context.Context, c *Completion) {
 	wordStart := len(input) - len(word)
 	tokenOffset := comp.Start - wordStart
 	if tokenOffset < 0 {
+		c.Debug("completion: skip JSON token starting in an earlier word\n")
 		return // The token starts in an earlier shell word.
 	}
 	prefix := word[:tokenOffset]

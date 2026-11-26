@@ -86,6 +86,8 @@ an object. For example, input `{a:1 b` produces `Keys: []string{"a"}`.
 Trailing whitespace clears the token, advances the array position to `/a/1`, and
 sets the offset to the input length. An offset of `-1` indicates that input ends
 inside a line or block comment, where completion should be suppressed.
+After an object name and trailing whitespace or a completed comment, completion
+suggests the missing `:` instead of another name.
 
 Pass a configured `*RelaxedReader` to `MakeCompletion` to complete an implicit
 object or array. `Completion.Wrap` reports the reader's active wrapping mode;

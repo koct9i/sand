@@ -20,7 +20,6 @@ const (
 
 // NewCommand demonstrates suggestions and completion callbacks for flags and positional arguments.
 func NewCommand() *cli.Command {
-	boolean := []cli.Suggestion{{Text: "false", Note: "Disabled"}, {Text: "true", Note: "Enabled"}}
 	return &cli.Command{
 		Name:  "completion",
 		Usage: "try flag and argument completion",
@@ -50,8 +49,8 @@ Examples:
 					{Text: "9090", Note: "Metrics"},
 				},
 			},
-			&cli.BoolFlag{Name: "enabled", Usage: "Complete an explicit boolean value with --enabled=", Suggestions: boolean},
-			&cli.BoolWithInverseFlag{Name: "color", Value: true, Usage: "Boolean with a --no-color inverse", Suggestions: boolean},
+			&cli.BoolFlag{Name: "enabled", Usage: "Complete an explicit boolean value with --enabled=", TNote: "Enabled", FNote: "Disabled"},
+			&cli.BoolWithInverseFlag{Name: "color", Value: true, Usage: "Boolean with a --no-color inverse", TNote: "Enabled", FNote: "Disabled"},
 			&cli.DurationFlag{
 				Name: "delay", Value: time.Second, Usage: "Example duration",
 				Suggestions: []cli.Suggestion{
@@ -161,9 +160,9 @@ func jsonCommand() *cli.Command {
 		Usage: "complete relaxed JSON fields, including recursive service dictionaries",
 		Arguments: []cli.Argument{
 			&cli.RelaxedJSONArguments[serviceConfig]{
-				Name: "config", 
+				Name:        "config",
 				Destination: &config,
-				Options: []json.Options{json.RejectUnknownMembers(true)},
+				Options:     []json.Options{json.RejectUnknownMembers(true)},
 			},
 		},
 		Action: func(_ context.Context, command *cli.Command) error {

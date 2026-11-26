@@ -78,7 +78,7 @@ func TestCompletionInstallCreatesParentDirectories(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", dataHome)
 
 	var output bytes.Buffer
-	if err := doCompletionScript(&output, "bash", "go", "golang-tool-completion", true); err != nil {
+	if err := doCompletionScript(&output, "bash", "go", "golang-tool-completion", true, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,6 +92,144 @@ func TestCompletionInstallCreatesParentDirectories(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), scriptPath) {
 		t.Fatalf("install output %q does not mention %q", output.String(), scriptPath)
+	}
+}
+
+func TestCompletionScriptsPreserveDebug(t *testing.T) {
+	for _, tt := range []struct{ shell, path string }{
+		{"bash", "bash-completion/completions/tool"},
+		{"fish", "fish/vendor_completions.d/tool.fish"},
+		{"zsh", "zsh/site-functions/_tool"},
+	} {
+		for _, install := range []bool{false, true} {
+			for _, debug := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/install=%t/debug=%t", tt.shell, install, debug), func(t *testing.T) {
+					dataHome := filepath.Join(t.TempDir(), "xdg-data")
+					t.Setenv("XDG_DATA_HOME", dataHome)
+					var output bytes.Buffer
+					root := &Command{
+						Name: "sand", Writer: &output, ErrWriter: io.Discard,
+						Commands: []*Command{CompletionCommand()},
+					}
+					args := []string{"sand", "completion", "--alias", "tool"}
+					if install {
+						args = append(args, "--install")
+					}
+					if debug {
+						args = append(args, "--debug")
+					}
+					if err := root.Run(t.Context(), append(args, tt.shell)); err != nil {
+						t.Fatal(err)
+					}
+					script := output.String()
+					if install {
+						scriptPath := filepath.Join(dataHome, filepath.FromSlash(tt.path))
+						data, err := os.ReadFile(scriptPath)
+						if err != nil {
+							t.Fatal(err)
+						}
+						script = string(data)
+						if !strings.Contains(output.String(), scriptPath) {
+							t.Fatalf("install output %q does not mention %q", output.String(), scriptPath)
+						}
+					}
+					want := `"sand" completion`
+					if debug {
+						want += " --debug"
+					}
+					want += " --complete " + tt.shell + " --"
+					if !strings.Contains(script, want) || strings.Contains(script, "--debug") != debug {
+						t.Fatalf("script = %q, want handler invocation %q", script, want)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestCompletionDebugStaysOnStderr(t *testing.T) {
+	for _, shell := range []string{"bash", "fish", "zsh"} {
+		for _, debug := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/debug=%t", shell, debug), func(t *testing.T) {
+				var output, diagnostics bytes.Buffer
+				root := &Command{
+					Name: "sand", Writer: &output, ErrWriter: &diagnostics,
+					Commands: []*Command{CompletionCommand(), {
+						Name: "configure",
+						Arguments: []Argument{&StringArg{
+							Name: "value", Suggestions: []Suggestion{{Text: "result"}},
+						}},
+					}},
+				}
+				args := []string{"sand", "completion", "--complete"}
+				if debug {
+					args = append(args, "--debug")
+				}
+				args = append(args, shell, "--", "configure", "re")
+				if err := root.Run(t.Context(), args); err != nil {
+					t.Fatal(err)
+				}
+				want := map[string]string{"bash": "result\n", "fish": "result\t\n", "zsh": "result:\n"}[shell]
+				if output.String() != want {
+					t.Fatalf("completion output = %q, want %q", output.String(), want)
+				}
+				if !debug {
+					if diagnostics.Len() != 0 {
+						t.Fatalf("debugging disabled, got diagnostics %q", diagnostics.String())
+					}
+					return
+				}
+				for _, message := range []string{
+					"completion: request shell=", `enter command="configure"`,
+					"handler=argument", `suggest text="result"`, "collected 1 candidates",
+					`reply text="result"`,
+				} {
+					if !strings.Contains(diagnostics.String(), message) {
+						t.Errorf("diagnostics %q do not contain %q", diagnostics.String(), message)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestCompletionDebugExplainsDispatch(t *testing.T) {
+	root := &Command{Name: "sand", Commands: []*Command{{
+		Name: "configure",
+		Flags: []Flag{&StringFlag{
+			Name: "output", Suggestions: []Suggestion{{Text: "result"}},
+		}},
+		Arguments: []Argument{&StringArgs{
+			Name: "values", Max: -1, Suggestions: []Suggestion{{Text: "result"}},
+		}},
+	}}}
+	for _, tt := range []struct {
+		name     string
+		words    []string
+		messages []string
+	}{
+		{"commands", []string{"co"}, []string{"handler=commands"}},
+		{"flag names", []string{"configure", "--out"}, []string{"handler=flag-names"}},
+		{"flag value", []string{"configure", "--output", "re"}, []string{"handler=flag-value"}},
+		{"inline flag value", []string{"configure", "--output=re"}, []string{"handler=inline-flag-value"}},
+		{"Bash word breaks", []string{"configure", "--output", "=", "re"}, []string{`normalized words=["configure" "--output=re"]`, "handler=inline-flag-value"}},
+		{"consumed flag value", []string{"configure", "--output", "path", "re"}, []string{`consume value="path" for flag=["output"]`, "handler=argument"}},
+		{"unknown flag", []string{"configure", "--missing=x"}, []string{"supported=false", "no completion handler"}},
+		{"delimiter", []string{"configure", "--", "re"}, []string{"stop at flag delimiter", "no completion handler"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var diagnostics bytes.Buffer
+			got := MakeCompletion(t.Context(), root, "bash", tt.words, &diagnostics)
+			plain := MakeCompletion(t.Context(), root, "bash", tt.words, nil)
+			if !slices.Equal(got.Output, plain.Output) {
+				t.Fatalf("debugging changed candidates: got %v, want %v", got.Output, plain.Output)
+			}
+			for _, message := range tt.messages {
+				if !strings.Contains(diagnostics.String(), message) {
+					t.Errorf("diagnostics %q do not contain %q", diagnostics.String(), message)
+				}
+			}
+		})
 	}
 }
 

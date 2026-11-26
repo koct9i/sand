@@ -6,6 +6,13 @@ With `sand` on your `PATH`, load Bash completion with:
 source <(sand completion bash)
 ```
 
+Use `sand completion --debug --install bash` to install completion that prints
+diagnostics to stderr on every request. This also works for Fish and Zsh, or with
+`source <(sand completion --debug bash)` for the current Bash session. Add `--debug`
+to a direct `completion --complete` request to inspect its parser state, selected
+handler, candidates, and shell replacements. Completion callbacks can add their
+own diagnostics with `Completion.Debug`.
+
 Bash suggestions escape unquoted shell metacharacters, including `<`, `>`, spaces,
 and opening braces (`\{`), so values remain single arguments and nested JSON remains
 completable with the default word breaks. Existing escapes and quoted text
