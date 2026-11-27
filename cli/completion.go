@@ -600,9 +600,10 @@ complete -o bashdefault -o default -F __%[1]s_complete_bash %[1]s
 		script = fmt.Sprintf(`function __fish_%[1]s_complete
   set -l args (commandline -opc) (commandline -ct)
   set -e args[1]
-  "%[2]s" completion%[3]s --complete fish -- $args
+  set -g __fish_%[1]s_completions ("%[2]s" completion%[3]s --complete fish -- $args)
+  set -q __fish_%[1]s_completions[1]
 end
-complete -a "(__fish_%[1]s_complete)" -c "%[1]s"
+complete -f -n '__fish_%[1]s_complete' -a '$__fish_%[1]s_completions' -c "%[1]s"
 `, command, handler, debugFlag)
 
 	case shellZsh:
